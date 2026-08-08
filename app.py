@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-COURSE_DIR = Path(__file__).parent / "AI Application Engineer Level 1"
+COURSE_DIR = Path(__file__).parent / "resources"
 
 st.set_page_config(page_title="AI Course Assistant", page_icon="🎓")
 st.title("🎓 AI Application Engineer Course Assistant")
