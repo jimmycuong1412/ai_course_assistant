@@ -1,40 +1,31 @@
 import os
 from pathlib import Path
 
-import fitz  # PyMuPDF
 import streamlit as st
-from openai import OpenAI
 from dotenv import load_dotenv
+from openai import APIConnectionError, APIError, RateLimitError
+
+from api_client import make_api_call
+from search_engine import CourseSearchEngine
+from tools import TOOLS_SCHEMA, execute_tool_call
+from prompts import SYSTEM_PROMPT
 
 load_dotenv()
 
-COURSE_DIR = Path(__file__).parent / "resources"
+RESOURCES_DIR = Path(__file__).parent / "resources"
 
 st.set_page_config(page_title="AI Course Assistant", page_icon="🎓")
 st.title("🎓 AI Application Engineer Course Assistant")
 
 
-def extract_pdf_text(file) -> str:
-    with fitz.open(stream=file.read(), filetype="pdf") as doc:
-        return "\n".join(page.get_text() for page in doc)
+@st.cache_resource(show_spinner="Indexing course materials...")
+def get_search_engine(resources_dir: Path) -> CourseSearchEngine:
+    return CourseSearchEngine(resources_dir)
 
 
-@st.cache_data(show_spinner="Reading course materials...")
-def load_course_materials(course_dir: str) -> dict:
-    sections = []
-    for pdf_path in sorted(Path(course_dir).rglob("*.pdf")):
-        with fitz.open(pdf_path) as doc:
-            text = "\n".join(page.get_text() for page in doc)
-        sections.append(f"=== {pdf_path.relative_to(course_dir)} ===\n{text}")
-    return {"text": "\n\n".join(sections), "count": len(sections)}
+search_engine = get_search_engine(RESOURCES_DIR)
 
-
-course_materials = (
-    load_course_materials(str(COURSE_DIR))
-    if COURSE_DIR.exists()
-    else {"text": "", "count": 0}
-)
-
+# Sidebar setup
 with st.sidebar:
     st.header("Azure OpenAI Settings")
     azure_endpoint = st.text_input(
@@ -46,41 +37,29 @@ with st.sidebar:
     model_name = st.text_input(
         "Model name", value=os.getenv("AZURE_OPENAI_MODEL", "")
     )
+
     if st.button("Clear chat history"):
         st.session_state.messages = []
         st.rerun()
 
-    st.header("Course Materials")
-    if course_materials["count"]:
-        st.caption(
-            f"Loaded {course_materials['count']} PDFs from "
-            f"'{COURSE_DIR.name}' ({len(course_materials['text'])} chars)"
-        )
-    else:
-        st.caption(f"No PDFs found in '{COURSE_DIR.name}'")
+    st.header("Knowledge Base Status")
+    st.caption(
+        f"Indexed **{len(search_engine.chunks)}** document chunks from "
+        f"`{RESOURCES_DIR.name}`"
+    )
 
-    st.header("Extra PDF Context")
-    pdf_file = st.file_uploader("Upload another PDF", type="pdf")
-    if pdf_file is not None:
-        if st.session_state.get("pdf_name") != pdf_file.name:
-            st.session_state.pdf_text = extract_pdf_text(pdf_file)
-            st.session_state.pdf_name = pdf_file.name
-        st.caption(f"Loaded: {st.session_state.pdf_name} "
-                   f"({len(st.session_state.pdf_text)} chars)")
-    elif st.session_state.get("pdf_name"):
-        if st.button("Remove PDF"):
-            st.session_state.pdf_text = None
-            st.session_state.pdf_name = None
-            st.rerun()
-
+# Initialize Session State
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Render existing chat history
 for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+    if message.get("role") in ["user", "assistant"] and message.get("content"):
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-user_input = st.chat_input("Ask a question...")
+# User Input Handling
+user_input = st.chat_input("Ask a question about assignments, workshops, or guidelines...")
 
 if user_input:
     if not (azure_endpoint and api_key and model_name):
@@ -91,52 +70,79 @@ if user_input:
     with st.chat_message("user"):
         st.markdown(user_input)
 
-    # Connection: close forces a fresh TCP connection per request. The STU AI
-    # Portal gateway mismatches request/response pairs on reused/pipelined
-    # connections (especially under concurrent load), which otherwise makes
-    # the assistant echo back a previous, unrelated reply.
-    client = OpenAI(
-        base_url=azure_endpoint,
-        api_key=api_key,
-        default_headers={"Connection": "close"},
-    )
+    print(f"\n[LOG] User Input: '{user_input}'")
 
-    context_text = course_materials["text"]
-    if st.session_state.get("pdf_text"):
-        context_text += "\n\n" + st.session_state.pdf_text
+    # Sanitize message history
+    clean_history = [
+        {"role": msg["role"], "content": str(msg["content"])}
+        for msg in st.session_state.messages
+        if msg.get("role") in ["user", "assistant"] and msg.get("content")
+    ]
 
-    system_prompt = f"""You are a helpful assistant for an AI course.
-
---- COURSE MATERIALS ---
-{context_text if context_text else "No course materials provided."}
---- END COURSE MATERIALS ---
-
-STRICT INSTRUCTIONS:
-1. Answer questions based ONLY on the information present in the course materials above.
-2. If the user's question is unrelated to the course materials or cannot be answered using them, respond politely with:
-   "I'm sorry, but that question is not related to the course materials. Please ask a question related to the course."
-3. Do not make up answers, use external knowledge, or provide information outside of the course materials.
-"""
-
-    request_messages = [
-        {"role": "system", "content": system_prompt}
-    ] + st.session_state.messages
+    request_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + clean_history
 
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_response = ""
-        try:
-            stream = client.chat.completions.create(
-                model=model_name,
-                messages=request_messages,
-                stream=True,
-            )
-            for chunk in stream:
-                if chunk.choices and chunk.choices[0].delta.content:
-                    full_response += chunk.choices[0].delta.content
-                    placeholder.markdown(full_response)
-        except Exception as exc:
-            full_response = f"Error calling the API: {exc}"
-            placeholder.error(full_response)
 
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
+        try:
+            # Step 1: Initial completion call to determine tool usage
+            response = make_api_call(
+                azure_endpoint=azure_endpoint,
+                api_key=api_key,
+                model_name=model_name,
+                messages=request_messages,
+                tools=TOOLS_SCHEMA,
+                temperature=0.0,
+            )
+
+            response_message = response.choices[0].message
+
+            if response_message.tool_calls:
+                request_messages.append(response_message)
+
+                # Execute requested tools
+                for tool_call in response_message.tool_calls:
+                    try:
+                        tool_responses = execute_tool_call(tool_call, search_engine)
+                        for tool_resp in tool_responses:
+                            request_messages.append(tool_resp)
+                    except Exception as tool_exc:
+                        print(f"[LOG] Tool Execution Error: {tool_exc}")
+                        request_messages.append({
+                            "tool_call_id": tool_call.id,
+                            "role": "tool",
+                            "name": tool_call.function.name,
+                            "content": f"Error executing tool: {str(tool_exc)}",
+                        })
+
+                # Step 2: Stream final synthesized response
+                stream = make_api_call(
+                    azure_endpoint=azure_endpoint,
+                    api_key=api_key,
+                    model_name=model_name,
+                    messages=request_messages,
+                    stream=True,
+                    temperature=0.3,
+                )
+
+                for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        full_response += chunk.choices[0].delta.content
+                        placeholder.markdown(full_response)
+            else:
+                print("[LOG] Tool Call: None (Direct Answer)")
+                full_response = response_message.content or ""
+                placeholder.markdown(full_response)
+
+        except (RateLimitError, APIConnectionError, APIError) as api_err:
+            full_response = f"API Service Error (failed after 5 retries): {api_err}"
+            placeholder.error(full_response)
+            print(f"[LOG] API Error: {api_err}")
+        except Exception as exc:
+            full_response = f"An unexpected error occurred: {exc}"
+            placeholder.error(full_response)
+            print(f"[LOG] Unexpected Error: {exc}")
+
+    if full_response:
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
