@@ -4,13 +4,13 @@
 
 | Thành viên | Công việc |
 |---|---|
-| **VietNQ32** | Tạo test scenarios, Thiết kế giao diện UI Streamlit, Chuẩn bị slide demo  |
-| **CuongTQ7** | Xác định bài toán, Triển khai chat completion, Tinh chỉnh prompt và few-shot examples |
-| **AnNPH5** | Tạo system prompt template, Triển khai chat interface |
-| **GiapHN** | Chunking data submissions, Xử lý response, Kiểm tra hiệu năng và tối ưu hóa |
-| **LocNTH** | Thiết kế mock data assignments, Triển khai tool/function calling, Xử lý lỗi và edge cases |
-| **ThangTP3** | Thiết kế conversation flow, Xây dựng sidebar |
-| **TrucNLT** | Viết unit tests, Viết tài liệu kỹ thuật |
-| **DungPQ6** | Tạo few-shot examples, Tích hợp upload file và context, Đánh giá rút kinh nghiệm |
-| **ThanhVD7** | Định nghĩa tool calling schema, Tích hợp cuối cùng và hoàn thiện |
-| **NhatNM5** | Cấu hình OpenAI client, Kiểm tra hiệu quả prompt, Thực hiện demo và thu thập phản hồi |
+| **GiapHN** | Xây dựng ChromaDB: tạo embeddings offline, lưu trữ persistent, chunking PDF và triển khai truy vấn tìm kiếm theo ngữ nghĩa |
+| **CuongTQ7** | Tích hợp Azure OpenAI SDK; thiết kế prompt CoT + few-shot; sinh câu trả lời ngôn ngữ tự nhiên dựa trên context từ ChromaDB, kèm retry bằng tenacity |
+| **DungPQ6** | Tích hợp STT (faster-whisper) và TTS (gTTS); chuyển giọng nói thành câu hỏi và câu trả lời thành audio; tự nhận diện ngôn ngữ Việt/Anh |
+| **AnNPH5** | Xây dựng giao diện Streamlit; sidebar cấu hình la mã; quản lý phiên hội thoại nhiều lượt; ép câu trả lời đúng ngôn ngữ người hỏi |
+| **LocNTH** | Định nghĩa function calling schema (`search_course_knowledge`); triển khai tool handler và xử lý lỗi/edge cases khi search thất bại |
+| **ThangTP3** | Thiết kế conversation flow; tinh chỉnh sidebar và hiển thị trạng thái knowledge base; chuẩn bị bộ câu hỏi demo |
+| **TrucNLT** | Viết unit tests (pytest + mock) và kiểm thử end-to-end; chuẩn bị conversation logs minh họa multi-turn |
+| **VietNQ32** | Làm slide kiến trúc hệ thống và insight dự án; thuyết trình chính trên sân khấu; chuẩn bị mock data user queries/FAQs |
+| **ThanhVD7** | Tích hợp cuối pipeline STT → RAG → LLM → TTS trôi chảy; rà soát lỗi và đảm bảo demo chạy mượt |
+ 
