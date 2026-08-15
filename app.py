@@ -41,6 +41,9 @@ with st.sidebar:
 
     st.header("Voice Settings")
     enable_tts = st.toggle("Enable Voice Output (TTS)", value=True)
+    autoplay_audio = st.toggle(
+        "Auto-play audio", value=True, disabled=not enable_tts
+    )
 
     if st.button("Clear chat history"):
         st.session_state.messages = []
@@ -138,7 +141,7 @@ if user_input:
                 with st.spinner("Generating audio..."):
                     try:
                         audio_bytes = text_to_speech(full_response)
-                        st.audio(audio_bytes, format="audio/mp3", autoplay=True)
+                        st.audio(audio_bytes, format="audio/mp3", autoplay=autoplay_audio)
                     except Exception as tts_exc:
                         print(f"[LOG] TTS Error: {tts_exc}")
                         st.warning(f"Could not generate audio: {tts_exc}")
