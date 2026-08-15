@@ -5,7 +5,7 @@
 | Thành viên | Công việc |
 |---|---|
 | **GiapHN** | Xây dựng ChromaDB: tạo embeddings offline, lưu trữ persistent, chunking PDF và triển khai truy vấn tìm kiếm theo ngữ nghĩa |
-| **CuongTQ7** | Tích hợp Azure OpenAI SDK; thiết kế prompt CoT + few-shot; sinh câu trả lời ngôn ngữ tự nhiên dựa trên context từ ChromaDB, kèm retry bằng tenacity |
+| **CuongTQ7** | Tích hợp Azure OpenAI SDK (`api_client.py`): `make_api_call` tạo client mới mỗi request kèm anti-caching header + `X-Request-ID`; retry bằng tenacity (exponential backoff, 5 lần) cho lỗi RateLimit/Connection/API; hỗ trợ streaming và `tool_choice=auto`. Thiết kế `SYSTEM_PROMPT` Chain-of-Thought + few-shot: ép model gọi tool khi gặp từ khóa khóa học và luôn trả lời đúng ngôn ngữ người hỏi |
 | **DungPQ6** | Tích hợp STT (faster-whisper) và TTS (gTTS); chuyển giọng nói thành câu hỏi và câu trả lời thành audio; tự nhận diện ngôn ngữ Việt/Anh |
 | **AnNPH5** | Xây dựng giao diện Streamlit; sidebar cấu hình la mã; quản lý phiên hội thoại nhiều lượt; ép câu trả lời đúng ngôn ngữ người hỏi |
 | **LocNTH** | Định nghĩa function calling schema (`search_course_knowledge`); triển khai tool handler và xử lý lỗi/edge cases khi search thất bại |
