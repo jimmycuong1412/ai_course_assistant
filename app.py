@@ -9,7 +9,7 @@ from api_client import APIClient
 from prompts import SYSTEM_PROMPT
 from search_engine import CourseSearchEngine
 from tools import TOOLS_SCHEMA, execute_tool_call
-from tts import text_to_speech
+from tts_engine import TTSEngine
 
 load_dotenv()
 
@@ -29,8 +29,14 @@ def get_search_engine(resources_dir: Path) -> CourseSearchEngine:
     return CourseSearchEngine(resources_dir)
 
 
+@st.cache_resource(show_spinner="Initializing Text-to-Speech Engine...")
+def get_tts_engine() -> TTSEngine:
+    return TTSEngine()
+
+
 api_client = get_api_client()
 search_engine = get_search_engine(RESOURCES_DIR)
+tts_engine = get_tts_engine()
 
 # Sidebar setup
 with st.sidebar:
@@ -136,12 +142,13 @@ if user_input:
                 full_response = response_message.content or ""
                 placeholder.markdown(full_response)
 
-            # Step 3: Synthesize voice output if enabled (auto-detects English/Vietnamese)
+            # Step 3: Synthesize voice output if enabled via TTSEngine
             if enable_tts and full_response:
                 with st.spinner("Generating audio..."):
                     try:
-                        audio_bytes = text_to_speech(full_response)
-                        st.audio(audio_bytes, format="audio/mp3", autoplay=autoplay_audio)
+                        audio_bytes = tts_engine.synthesize(full_response)
+                        if audio_bytes:
+                            st.audio(audio_bytes, format="audio/mp3", autoplay=autoplay_audio)
                     except Exception as tts_exc:
                         print(f"[LOG] TTS Error: {tts_exc}")
                         st.warning(f"Could not generate audio: {tts_exc}")
