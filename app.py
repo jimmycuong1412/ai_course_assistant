@@ -5,10 +5,11 @@ import streamlit as st
 from dotenv import load_dotenv
 from openai import APIConnectionError, APIError, RateLimitError
 
-from api_client import make_api_call
+from api_client import APIClient
+from prompts import SYSTEM_PROMPT
 from search_engine import CourseSearchEngine
 from tools import TOOLS_SCHEMA, execute_tool_call
-from prompts import SYSTEM_PROMPT
+from tts_engine import TTSEngine
 
 load_dotenv()
 
@@ -18,25 +19,34 @@ st.set_page_config(page_title="AI Course Assistant", page_icon="🎓")
 st.title("🎓 AI Application Engineer Course Assistant")
 
 
-@st.cache_resource(show_spinner="Indexing course materials...")
+@st.cache_resource(show_spinner="Initializing API Client...")
+def get_api_client() -> APIClient:
+    return APIClient()
+
+
+@st.cache_resource(show_spinner="Indexing course materials into ChromaDB...")
 def get_search_engine(resources_dir: Path) -> CourseSearchEngine:
     return CourseSearchEngine(resources_dir)
 
 
+@st.cache_resource(show_spinner="Loading Text-to-Speech model...")
+def get_tts_engine() -> TTSEngine:
+    return TTSEngine()
+
+
+api_client = get_api_client()
 search_engine = get_search_engine(RESOURCES_DIR)
+tts_engine = get_tts_engine()
 
 # Sidebar setup
 with st.sidebar:
-    st.header("Azure OpenAI Settings")
-    azure_endpoint = st.text_input(
-        "Endpoint", value=os.getenv("AZURE_OPENAI_ENDPOINT", "")
-    )
-    api_key = st.text_input(
-        "API Key", value=os.getenv("AZURE_OPENAI_API_KEY", ""), type="password"
-    )
+    st.header("Settings")
     model_name = st.text_input(
-        "Model name", value=os.getenv("AZURE_OPENAI_MODEL", "")
+        "Model name", value=os.getenv("AZURE_OPENAI_MODEL", "gpt-4o-mini")
     )
+
+    st.header("Voice Settings")
+    enable_tts = st.toggle("Enable Voice Output (TTS)", value=True)
 
     if st.button("Clear chat history"):
         st.session_state.messages = []
@@ -44,8 +54,7 @@ with st.sidebar:
 
     st.header("Knowledge Base Status")
     st.caption(
-        f"Indexed **{len(search_engine.chunks)}** document chunks from "
-        f"`{RESOURCES_DIR.name}`"
+        f"Indexed **{len(search_engine.chunks)}** document chunks in ChromaDB."
     )
 
 # Initialize Session State
@@ -57,15 +66,13 @@ for message in st.session_state.messages:
     if message.get("role") in ["user", "assistant"] and message.get("content"):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            if message.get("audio"):
+                st.audio(message["audio"], format="audio/wav")
 
 # User Input Handling
 user_input = st.chat_input("Ask a question about assignments, workshops, or guidelines...")
 
 if user_input:
-    if not (azure_endpoint and api_key and model_name):
-        st.error("Please fill in Endpoint, API Key, and Model name in the sidebar.")
-        st.stop()
-
     st.session_state.messages.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
         st.markdown(user_input)
@@ -84,12 +91,11 @@ if user_input:
     with st.chat_message("assistant"):
         placeholder = st.empty()
         full_response = ""
+        audio_bytes = None
 
         try:
             # Step 1: Initial completion call to determine tool usage
-            response = make_api_call(
-                azure_endpoint=azure_endpoint,
-                api_key=api_key,
+            response = api_client.make_api_call(
                 model_name=model_name,
                 messages=request_messages,
                 tools=TOOLS_SCHEMA,
@@ -117,9 +123,7 @@ if user_input:
                         })
 
                 # Step 2: Stream final synthesized response
-                stream = make_api_call(
-                    azure_endpoint=azure_endpoint,
-                    api_key=api_key,
+                stream = api_client.make_api_call(
                     model_name=model_name,
                     messages=request_messages,
                     stream=True,
@@ -135,6 +139,13 @@ if user_input:
                 full_response = response_message.content or ""
                 placeholder.markdown(full_response)
 
+            # Step 3: Synthesize voice output if enabled
+            if enable_tts and full_response:
+                with st.spinner("Generating audio..."):
+                    audio_bytes = tts_engine.synthesize(full_response)
+                    if audio_bytes:
+                        st.audio(audio_bytes, format="audio/wav", autoplay=True)
+
         except (RateLimitError, APIConnectionError, APIError) as api_err:
             full_response = f"API Service Error (failed after 5 retries): {api_err}"
             placeholder.error(full_response)
@@ -145,4 +156,7 @@ if user_input:
             print(f"[LOG] Unexpected Error: {exc}")
 
     if full_response:
-        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        assistant_entry = {"role": "assistant", "content": full_response}
+        if audio_bytes:
+            assistant_entry["audio"] = audio_bytes
+        st.session_state.messages.append(assistant_entry)
