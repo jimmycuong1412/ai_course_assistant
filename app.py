@@ -9,7 +9,7 @@ from api_client import APIClient
 from prompts import SYSTEM_PROMPT
 from search_engine import CourseSearchEngine
 from tools import TOOLS_SCHEMA, execute_tool_call
-from tts_engine import TTSEngine
+from tts import text_to_speech
 
 load_dotenv()
 
@@ -29,14 +29,8 @@ def get_search_engine(resources_dir: Path) -> CourseSearchEngine:
     return CourseSearchEngine(resources_dir)
 
 
-@st.cache_resource(show_spinner="Loading Text-to-Speech model...")
-def get_tts_engine() -> TTSEngine:
-    return TTSEngine()
-
-
 api_client = get_api_client()
 search_engine = get_search_engine(RESOURCES_DIR)
-tts_engine = get_tts_engine()
 
 # Sidebar setup
 with st.sidebar:
@@ -67,7 +61,7 @@ for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
             if message.get("audio"):
-                st.audio(message["audio"], format="audio/wav")
+                st.audio(message["audio"], format="audio/mp3")
 
 # User Input Handling
 user_input = st.chat_input("Ask a question about assignments, workshops, or guidelines...")
@@ -139,12 +133,15 @@ if user_input:
                 full_response = response_message.content or ""
                 placeholder.markdown(full_response)
 
-            # Step 3: Synthesize voice output if enabled
+            # Step 3: Synthesize voice output if enabled (auto-detects English/Vietnamese)
             if enable_tts and full_response:
                 with st.spinner("Generating audio..."):
-                    audio_bytes = tts_engine.synthesize(full_response)
-                    if audio_bytes:
-                        st.audio(audio_bytes, format="audio/wav", autoplay=True)
+                    try:
+                        audio_bytes = text_to_speech(full_response)
+                        st.audio(audio_bytes, format="audio/mp3", autoplay=True)
+                    except Exception as tts_exc:
+                        print(f"[LOG] TTS Error: {tts_exc}")
+                        st.warning(f"Could not generate audio: {tts_exc}")
 
         except (RateLimitError, APIConnectionError, APIError) as api_err:
             full_response = f"API Service Error (failed after 5 retries): {api_err}"

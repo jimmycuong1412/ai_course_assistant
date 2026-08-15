@@ -16,6 +16,7 @@ This repository serves as the complete implementation for **Workshop 2: Building
 * **Resilient API Architecture**:
   * **Tenacity Retry Wrapper**: Automatic exponential backoff retries for transient errors (`RateLimitError`, `APIConnectionError`, `APIError`).
   * **Anti-Caching Header Invalidation**: Generates clean TCP connections per call to bypass gateway proxy caching issues.
+* **Text-to-Speech Voice Output (`gTTS`)**: Assistant replies are optionally spoken aloud, with the language (English/Vietnamese) auto-detected from the response text via `langdetect`.
 * **Batch Evaluation Suite**: CLI utility (`batch_eval.py`) to run batch test cases and export metrics to JSON.
 * **Modular Clean Architecture**: Full separation between UI logic, API client wrappers, search engine, and tool handlers.
 * **Unit Test Coverage**: Comprehensive suite using `pytest` and `pytest-mock`.
@@ -79,13 +80,15 @@ This repository serves as the complete implementation for **Workshop 2: Building
 ├── prompts.py              # System prompt definitions (CoT reasoning & Few-shot)
 ├── search_engine.py        # PDF Ingestion, spaCy Lemmatizer & BM25 Search Engine
 ├── tools.py                # OpenAI function schema & tool execution handler
+├── tts.py                  # Text-to-speech helper (gTTS + langdetect language auto-detection)
 ├── requirements.txt        # Project dependencies
 ├── README.md               # Project documentation
 └── tests/                  # Pytest unit tests
     ├── test_api_client.py
     ├── test_batch_eval.py
     ├── test_search_engine.py
-    └── test_tools.py
+    ├── test_tools.py
+    └── test_tts.py
 ```
 
 ---
