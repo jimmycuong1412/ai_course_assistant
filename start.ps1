@@ -1,6 +1,4 @@
 # AI Course Assistant Startup Script
-# Run this script to start the application
-
 param(
     [switch]$NoInstall
 )
@@ -9,18 +7,43 @@ param(
 $scriptDir = Split-Path -Parent -Path $MyInvocation.MyCommand.Definition
 Set-Location $scriptDir
 
-# Check if Python is available
+# Check if uv is available
+$hasUv = Get-Command uv -ErrorAction SilentlyContinue
+
+if ($hasUv) {
+    Write-Host "[INFO] Detected 'uv'. Managing environment with uv..." -ForegroundColor Cyan
+    
+    if (-not (Test-Path ".venv")) {
+        Write-Host "Creating virtual environment with uv..." -ForegroundColor Cyan
+        uv venv
+    }
+    
+    if (-not $NoInstall) {
+        Write-Host "Installing dependencies with uv..." -ForegroundColor Cyan
+        uv pip install -r requirements.txt
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Error: Failed to install dependencies with uv" -ForegroundColor Red
+            exit 1
+        }
+    }
+    
+    Write-Host "Starting AI Course Assistant..." -ForegroundColor Green
+    Write-Host "Opening http://localhost:8501 in your browser..." -ForegroundColor Green
+    uv run streamlit run app.py --server.fileWatcherType none
+    exit 0
+}
+
+# Fallback: Check if Python is available
 try {
     $pythonVersion = python --version 2>&1
-    Write-Host "Found: $pythonVersion"
+    Write-Host "[INFO] 'uv' not found. Found: $pythonVersion" -ForegroundColor Cyan
 } catch {
-    Write-Host "Error: Python is not installed or not in PATH" -ForegroundColor Red
+    Write-Host "Error: Neither 'uv' nor 'python' is installed or in PATH" -ForegroundColor Red
     exit 1
 }
 
-# Install dependencies unless --NoInstall is specified
 if (-not $NoInstall) {
-    Write-Host "Installing dependencies..." -ForegroundColor Cyan
+    Write-Host "Installing dependencies with pip..." -ForegroundColor Cyan
     python -m pip install -q -r requirements.txt
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Error: Failed to install dependencies" -ForegroundColor Red
@@ -28,7 +51,6 @@ if (-not $NoInstall) {
     }
 }
 
-# Run the Streamlit app
 Write-Host "Starting AI Course Assistant..." -ForegroundColor Green
 Write-Host "Opening http://localhost:8501 in your browser..." -ForegroundColor Green
-python -m streamlit run app.py
+python -m streamlit run app.py --server.fileWatcherType none
