@@ -60,19 +60,19 @@ TAVILY_API_KEY=your_tavily_api_key
 
 ## 🚀 Execution & Quick Start
 
-Use the included startup scripts to automatically set up the virtual environment, install dependencies, and launch the Streamlit interface:
+Use the included startup scripts inside the `scripts/` directory to automatically set up the virtual environment, install dependencies, and launch the Streamlit interface:
 
 ### Option 1: macOS / Linux (Bash)
 
 ```bash
-chmod +x start.sh
-./start.sh
+chmod +x scripts/start.sh
+./scripts/start.sh
 ```
 
 ### Option 2: Windows (PowerShell)
 
 ```powershell
-.\start.ps1
+.\scripts\start.ps1
 ```
 
 Tip: Pass `-NoInstall` to skip re-installing dependencies on subsequent runs.
@@ -80,8 +80,9 @@ Tip: Pass `-NoInstall` to skip re-installing dependencies on subsequent runs.
 ### Option 3: Windows (Command Prompt)
 
 ```cmd
-start.bat
+scripts\start.bat
 ```
+
 ---
 
 ## 🏗️ System Architecture
@@ -139,21 +140,34 @@ start.bat
 ## 📂 Repository Structure
 
 ```text
-workshop-4/
-├── resources/              # Internal course PDF documents (Assignments, Workshops, Guidelines)
-├── .env.example          # Sample environment variables template
-├── .gitignore            # Git ignore rules
-├── requirements.txt      # Project dependencies (LangChain, LangGraph, Pinecone, Tavily, etc.)
-├── document_processor.py   # PDF Loader (PyPDFLoader) & Semantic Text Splitter
-├── vector_store.py         # Pinecone Serverless Vector Store & Similarity Search
-├── prompts.py              # LangChain ChatPromptTemplate with CoT & Few-Shot Examples
-├── tools.py                # LangChain Tools (Pinecone RAG retrieval & Tavily Search)
-├── vision_engine.py        # Multimodal Vision Analyzer with Structured Output
-├── agent_runner.py         # LangGraph ReAct Agent orchestration & Sliding Window Memory
-├── tts_engine.py           # Text-to-Speech Engine (gTTS + Language Auto-Detection)
-├── app.py                  # Main Streamlit Web Application
-├── start.bat             # Startup script for Windows CMD
-└── start.ps1             # Startup script for Windows PowerShell
+workshop4/
+├── resources/                  # Internal course PDF documents (Assignments, Workshops, Guidelines)
+├── scripts/                    # Startup automation scripts
+│   ├── start.bat               # Windows CMD launcher
+│   ├── start.ps1               # Windows PowerShell launcher
+│   └── start.sh                # macOS / Linux Bash launcher
+├── src/                        # Core system source code
+│   ├── agent/                  # Agent reasoning & tool handling
+│   │   ├── __init__.py
+│   │   ├── agent_runner.py     # LangGraph ReAct Agent orchestration & history window
+│   │   ├── prompts.py          # LangChain ChatPromptTemplate with CoT & Few-Shot Examples
+│   │   └── tools.py            # LangChain Tools (Pinecone RAG retrieval & Tavily Search)
+│   ├── engines/                # Specialized service engines
+│   │   ├── __init__.py
+│   │   ├── tts_engine.py       # Text-to-Speech Engine (gTTS + Language Auto-Detection)
+│   │   └── vision_engine.py    # Multimodal Vision Analyzer with Structured Output
+│   ├── rag/                    # Data processing & Vector Database
+│   │   ├── __init__.py
+│   │   ├── document_processor.py # PDF Loader (PyPDFLoader) & Semantic Text Splitter
+│   │   └── vector_store.py     # Pinecone Serverless Vector Store & Similarity Search
+│   ├── __init__.py
+│   └── app.py                  # Main Streamlit Web Application
+├── tests/                      # Unit test suites
+├── .env.example                # Sample environment variables template
+├── .gitignore                  # Git ignore rules
+├── README.md                   # Project documentation
+├── requirements.txt            # Project dependencies
+└── TASKS_LIST.md               # Task tracking checklist
 
 ```
 

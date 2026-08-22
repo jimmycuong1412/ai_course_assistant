@@ -9,9 +9,9 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
-from prompts import SYSTEM_INSTRUCTION
-from tools import get_agent_tools
-from vector_store import CourseVectorStore
+from src.agent.prompts import SYSTEM_INSTRUCTION
+from src.agent.tools import get_agent_tools
+from src.rag.vector_store import CourseVectorStore
 
 
 class CourseAgentRunner:

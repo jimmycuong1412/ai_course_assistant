@@ -14,7 +14,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
 
-from document_processor import CourseDocumentProcessor
+from src.rag.document_processor import CourseDocumentProcessor
 
 
 class CourseVectorStore:

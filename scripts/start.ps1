@@ -3,9 +3,9 @@ param(
     [switch]$NoInstall
 )
 
-# Get script directory
-$scriptDir = Split-Path -Parent -Path $MyInvocation.MyCommand.Definition
-Set-Location $scriptDir
+# Get project root directory (parent directory of scripts/)
+$projectRoot = Split-Path -Parent -Path (Split-Path -Parent -Path $MyInvocation.MyCommand.Definition)
+Set-Location $projectRoot
 
 # Check if uv is available
 $hasUv = Get-Command uv -ErrorAction SilentlyContinue
@@ -29,7 +29,8 @@ if ($hasUv) {
     
     Write-Host "Starting AI Course Assistant..." -ForegroundColor Green
     Write-Host "Opening http://localhost:8501 in your browser..." -ForegroundColor Green
-    uv run streamlit run app.py --server.fileWatcherType none
+    $env:PYTHONPATH = "."
+    uv run streamlit run src/app.py --server.fileWatcherType none
     exit 0
 }
 
@@ -53,4 +54,5 @@ if (-not $NoInstall) {
 
 Write-Host "Starting AI Course Assistant..." -ForegroundColor Green
 Write-Host "Opening http://localhost:8501 in your browser..." -ForegroundColor Green
-python -m streamlit run app.py --server.fileWatcherType none
+$env:PYTHONPATH = "."
+python -m streamlit run src/app.py --server.fileWatcherType none

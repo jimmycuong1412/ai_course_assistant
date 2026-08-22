@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Change to the script directory
-cd "$(dirname "$0")"
+# Change directory to the project root (parent directory of scripts/)
+cd "$(dirname "$0")/.."
 
 # Check if uv is available
 if command -v uv &> /dev/null; then
@@ -20,7 +20,8 @@ if command -v uv &> /dev/null; then
     fi
     
     echo "Starting AI Course Assistant..."
-    uv run streamlit run app.py --server.fileWatcherType none
+    export PYTHONPATH=.
+    uv run streamlit run src/app.py --server.fileWatcherType none
     exit 0
 fi
 
@@ -41,4 +42,5 @@ if [ $? -ne 0 ]; then
 fi
 
 echo "Starting AI Course Assistant..."
-$PYTHON_CMD -m streamlit run app.py --server.fileWatcherType none
+export PYTHONPATH=.
+$PYTHON_CMD -m streamlit run src/app.py --server.fileWatcherType none

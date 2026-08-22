@@ -7,7 +7,7 @@ import os
 from typing import List, Optional
 from langchain_core.tools import BaseTool, tool
 from langchain_tavily import TavilySearch
-from vector_store import CourseVectorStore
+from src.rag.vector_store import CourseVectorStore
 
 
 def create_course_search_tool(vector_store: CourseVectorStore) -> BaseTool:

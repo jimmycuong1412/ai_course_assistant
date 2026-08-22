@@ -8,16 +8,16 @@ from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
 
-from agent_runner import CourseAgentRunner
-from tts_engine import TTSEngine
-from vector_store import CourseVectorStore
-from vision_engine import VisionEngine
+from src.agent.agent_runner import CourseAgentRunner
+from src.engines.tts_engine import TTSEngine
+from src.rag.vector_store import CourseVectorStore
+from src.engines.vision_engine import VisionEngine
 
 # ==============================================================================
 # Step 0: Page Config & Resource Paths
 # ==============================================================================
 load_dotenv()
-RESOURCES_DIR = Path(__file__).parent / "resources"
+RESOURCES_DIR = Path(__file__).parent.parent / "resources"
 
 st.set_page_config(page_title="AI Course Assistant - WS4", page_icon="🎓", layout="wide")
 st.title("🎓 AI Application Engineer - Smart Assistant")
