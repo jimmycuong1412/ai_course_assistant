@@ -1,167 +1,162 @@
-import os
-from pathlib import Path
+"""
+app.py - Main Streamlit UI for the AI Course Assistant.
+Combines Pinecone Vector Store, LangGraph ReAct Agent, Tavily Search,
+Multimodal Vision Analysis, and Text-to-Speech synthesis.
+"""
 
+from pathlib import Path
 import streamlit as st
 from dotenv import load_dotenv
-from openai import APIConnectionError, APIError, RateLimitError
 
-from api_client import APIClient
-from prompts import SYSTEM_PROMPT
-from search_engine import CourseSearchEngine
-from tools import TOOLS_SCHEMA, execute_tool_call
+from agent_runner import CourseAgentRunner
 from tts_engine import TTSEngine
+from vector_store import CourseVectorStore
+from vision_engine import VisionEngine
 
+# ==============================================================================
+# Step 0: Page Config & Resource Paths
+# ==============================================================================
 load_dotenv()
-
 RESOURCES_DIR = Path(__file__).parent / "resources"
 
-st.set_page_config(page_title="AI Course Assistant", page_icon="🎓")
-st.title("🎓 AI Application Engineer Course Assistant")
+st.set_page_config(page_title="AI Course Assistant - WS4", page_icon="🎓", layout="wide")
+st.title("🎓 AI Application Engineer - Smart Assistant")
 
 
-@st.cache_resource(show_spinner="Initializing API Client...")
-def get_api_client() -> APIClient:
-    return APIClient()
+# ==============================================================================
+# Step 1: Resource Caching & Initialization
+# ==============================================================================
+@st.cache_resource(show_spinner="Connecting to Pinecone Vector Store...")
+def get_vector_store() -> CourseVectorStore:
+    return CourseVectorStore(RESOURCES_DIR)
 
 
-@st.cache_resource(show_spinner="Indexing course materials into ChromaDB...")
-def get_search_engine(resources_dir: Path) -> CourseSearchEngine:
-    return CourseSearchEngine(resources_dir)
+@st.cache_resource(show_spinner="Initializing LangGraph ReAct Agent...")
+def get_agent_runner(_vector_store: CourseVectorStore) -> CourseAgentRunner:
+    return CourseAgentRunner(_vector_store)
 
 
-@st.cache_resource(show_spinner="Initializing Text-to-Speech Engine...")
+@st.cache_resource(show_spinner="Initializing Multimodal Vision Engine...")
+def get_vision_engine() -> VisionEngine:
+    return VisionEngine()
+
+
+@st.cache_resource(show_spinner="Initializing TTS Voice Engine...")
 def get_tts_engine() -> TTSEngine:
     return TTSEngine()
 
 
-api_client = get_api_client()
-search_engine = get_search_engine(RESOURCES_DIR)
+vector_store = get_vector_store()
+agent_runner = get_agent_runner(vector_store)
+vision_engine = get_vision_engine()
 tts_engine = get_tts_engine()
 
-# Sidebar setup
+
+# ==============================================================================
+# Step 2: Sidebar Settings & Knowledge Base Status
+# ==============================================================================
 with st.sidebar:
-    st.header("Settings")
-    model_name = st.text_input(
-        "Model name", value=os.getenv("AZURE_OPENAI_MODEL", "gpt-4o-mini")
-    )
+    st.header("⚙️ Settings")
+    st.caption("Architecture: **LangGraph ReAct Agent + Pinecone + Tavily**")
 
-    st.header("Voice Settings")
-    enable_tts = st.toggle("Enable Voice Output (TTS)", value=True)
-    autoplay_audio = st.toggle(
-        "Auto-play audio", value=True, disabled=not enable_tts
-    )
+    st.subheader("🎙️ Voice Output (TTS)")
+    enable_tts = st.toggle("Enable Voice Output", value=True)
+    autoplay_audio = st.toggle("Auto-play Audio", value=True, disabled=not enable_tts)
 
-    if st.button("Clear chat history"):
+    st.subheader("🖼️ Multimodal Input")
+    uploaded_image = st.file_uploader(
+        "Upload screenshot or diagram (Optional)",
+        type=["png", "jpg", "jpeg"],
+        help="Upload error traceback screenshots, code images, or architecture diagrams.",
+    )
+    if uploaded_image:
+        st.image(uploaded_image, caption="Uploaded Image Preview", use_container_width=True)
+
+    if st.button("🧹 Clear Chat History", use_container_width=True):
         st.session_state.messages = []
         st.rerun()
 
-    st.header("Knowledge Base Status")
-    st.caption(
-        f"Indexed **{len(search_engine.chunks)}** document chunks in ChromaDB."
-    )
+    st.divider()
+    st.subheader("📊 System Status")
+    st.success(f"Connected to Pinecone Index: `{vector_store.index_name}`")
 
-# Initialize Session State
+
+# ==============================================================================
+# Step 3: Session State & Chat History Rendering
+# ==============================================================================
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Render existing chat history
+# Display previous conversation messages
 for message in st.session_state.messages:
     if message.get("role") in ["user", "assistant"] and message.get("content"):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            if message.get("image_bytes"):
+                st.image(message["image_bytes"], width=300)
             if message.get("audio"):
                 st.audio(message["audio"], format="audio/mp3")
 
-# User Input Handling
-user_input = st.chat_input("Ask a question about assignments, workshops, or guidelines...")
 
-if user_input:
-    st.session_state.messages.append({"role": "user", "content": user_input})
+# ==============================================================================
+# Step 4: User Query Processing & Execution Loop
+# ==============================================================================
+user_input = st.chat_input("Ask about assignments, workshops, code errors, or external technical topics...")
+
+if user_input or uploaded_image:
+    current_prompt = user_input or "Please inspect this uploaded image and provide guidance."
+    image_bytes_to_store = None
+    augmented_prompt = current_prompt
+
+    # Process uploaded image if available
+    if uploaded_image:
+        image_bytes = uploaded_image.read()
+        image_bytes_to_store = image_bytes
+        with st.spinner("Analyzing uploaded image with Multimodal Vision..."):
+            vision_context = vision_engine.analyze_image_bytes(image_bytes, user_note=current_prompt)
+            augmented_prompt = f"{current_prompt}\n\n{vision_context}"
+
+    # Record User Message
+    user_entry = {"role": "user", "content": current_prompt}
+    if image_bytes_to_store:
+        user_entry["image_bytes"] = image_bytes_to_store
+    st.session_state.messages.append(user_entry)
+
     with st.chat_message("user"):
-        st.markdown(user_input)
+        st.markdown(current_prompt)
+        if image_bytes_to_store:
+            st.image(image_bytes_to_store, width=300)
 
-    print(f"\n[LOG] User Input: '{user_input}'")
-
-    # Sanitize message history
-    clean_history = [
-        {"role": msg["role"], "content": str(msg["content"])}
-        for msg in st.session_state.messages
-        if msg.get("role") in ["user", "assistant"] and msg.get("content")
-    ]
-
-    request_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + clean_history
-
+    # Generate Assistant Response
     with st.chat_message("assistant"):
-        placeholder = st.empty()
-        full_response = ""
+        response_placeholder = st.empty()
         audio_bytes = None
 
-        try:
-            # Step 1: Initial completion call to determine tool usage
-            response = api_client.make_api_call(
-                model_name=model_name,
-                messages=request_messages,
-                tools=TOOLS_SCHEMA,
-                temperature=0.0,
-            )
-
-            response_message = response.choices[0].message
-
-            if response_message.tool_calls:
-                request_messages.append(response_message)
-
-                # Execute requested tools
-                for tool_call in response_message.tool_calls:
-                    try:
-                        tool_responses = execute_tool_call(tool_call, search_engine)
-                        for tool_resp in tool_responses:
-                            request_messages.append(tool_resp)
-                    except Exception as tool_exc:
-                        print(f"[LOG] Tool Execution Error: {tool_exc}")
-                        request_messages.append({
-                            "tool_call_id": tool_call.id,
-                            "role": "tool",
-                            "name": tool_call.function.name,
-                            "content": f"Error executing tool: {str(tool_exc)}",
-                        })
-
-                # Step 2: Stream final synthesized response
-                stream = api_client.make_api_call(
-                    model_name=model_name,
-                    messages=request_messages,
-                    stream=True,
-                    temperature=0.3,
+        with st.spinner("Agent is reasoning and executing tools..."):
+            try:
+                # Invoke LangGraph ReAct Agent
+                full_response = agent_runner.process_query(
+                    user_input=augmented_prompt,
+                    chat_history=st.session_state.messages,
+                    max_history_turns=10,
                 )
+                response_placeholder.markdown(full_response)
 
-                for chunk in stream:
-                    if chunk.choices and chunk.choices[0].delta.content:
-                        full_response += chunk.choices[0].delta.content
-                        placeholder.markdown(full_response)
-            else:
-                print("[LOG] Tool Call: None (Direct Answer)")
-                full_response = response_message.content or ""
-                placeholder.markdown(full_response)
-
-            # Step 3: Synthesize voice output if enabled via TTSEngine
-            if enable_tts and full_response:
-                with st.spinner("Generating audio..."):
+                # Synthesize TTS Audio if enabled
+                if enable_tts and full_response:
                     try:
                         audio_bytes = tts_engine.synthesize(full_response)
                         if audio_bytes:
                             st.audio(audio_bytes, format="audio/mp3", autoplay=autoplay_audio)
-                    except Exception as tts_exc:
-                        print(f"[LOG] TTS Error: {tts_exc}")
-                        st.warning(f"Could not generate audio: {tts_exc}")
+                    except Exception as tts_err:
+                        print(f"[LOG] TTS Warning: {tts_err}")
 
-        except (RateLimitError, APIConnectionError, APIError) as api_err:
-            full_response = f"API Service Error (failed after 5 retries): {api_err}"
-            placeholder.error(full_response)
-            print(f"[LOG] API Error: {api_err}")
-        except Exception as exc:
-            full_response = f"An unexpected error occurred: {exc}"
-            placeholder.error(full_response)
-            print(f"[LOG] Unexpected Error: {exc}")
+            except Exception as err:
+                full_response = f"An error occurred while executing the agent: {err}"
+                response_placeholder.error(full_response)
+                print(f"[X] Agent Runner Error: {err}")
 
+    # Append Assistant Message to History
     if full_response:
         assistant_entry = {"role": "assistant", "content": full_response}
         if audio_bytes:
