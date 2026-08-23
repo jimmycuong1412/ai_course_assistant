@@ -1,6 +1,6 @@
 """
 agent_runner.py - Orchestrates the LangGraph ReAct Agent pipeline with ChatOpenAI,
-custom endpoints, tools (Internal RAG + Tavily Search), and direct metadata source extraction.
+custom endpoints, tools (Two-Stage RAG + Tavily Search), and metadata source extraction.
 """
 
 import os
@@ -70,7 +70,6 @@ class CourseAgentRunner:
 
         structured_sources: List[Dict[str, str]] = []
         for file_name, pages in sources_map.items():
-            # Sort page numbers numerically if possible
             try:
                 sorted_pages = sorted(list(pages), key=lambda x: int(x))
             except ValueError:

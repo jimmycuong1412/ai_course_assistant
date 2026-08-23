@@ -56,12 +56,13 @@ class CourseDocumentProcessor:
     def _extract_doc_code(self, filename: str) -> str:
         """
         Extracts standardized identifier codes (e.g., 'assignment_10', 'workshop_04').
+        Supports separators such as spaces, underscores, and hyphens.
         """
         fn = filename.lower()
-        match_asg = re.search(r"assignment\s*0?(\d+)", fn)
+        match_asg = re.search(r"assignment[\s_-]*0?(\d+)", fn)
         if match_asg:
             return f"assignment_{int(match_asg.group(1)):02d}"
-        match_ws = re.search(r"workshop\s*0?(\d+)", fn)
+        match_ws = re.search(r"workshop[\s_-]*0?(\d+)", fn)
         if match_ws:
             return f"workshop_{int(match_ws.group(1)):02d}"
         return "other"

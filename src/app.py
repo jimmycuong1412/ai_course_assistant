@@ -1,7 +1,7 @@
 """
 app.py - Main Streamlit UI for the AI Course Assistant.
-Combines Pinecone Vector Store, LangGraph ReAct Agent, Tavily Search,
-Multimodal Vision Analysis, and Text-to-Speech synthesis with Document Citations.
+Combines Pinecone Two-Stage Vector Store (Retrieve & Re-rank), LangGraph ReAct Agent,
+Tavily Search, Multimodal Vision Analysis, and Text-to-Speech synthesis with Document Citations.
 """
 
 from pathlib import Path
@@ -57,7 +57,7 @@ tts_engine = get_tts_engine()
 # ==============================================================================
 with st.sidebar:
     st.header("⚙️ Settings")
-    st.caption("Architecture: **LangGraph ReAct Agent + Pinecone + Tavily**")
+    st.caption("Architecture: **LangGraph ReAct Agent + Pinecone Two-Stage RAG + Tavily**")
 
     st.subheader("🎙️ Voice Output (TTS)")
     enable_tts = st.toggle("Enable Voice Output", value=True)
@@ -79,6 +79,7 @@ with st.sidebar:
     st.divider()
     st.subheader("📊 System Status")
     st.success(f"Connected to Pinecone Index: `{vector_store.index_name}`")
+    st.info("⚡ Two-Stage Retrieval Active: **Pinecone (k=15) ➔ bge-reranker-v2-m3 (top=5)**")
 
 
 # ==============================================================================
@@ -139,7 +140,7 @@ if user_input or uploaded_image:
 
         with st.spinner("Agent is reasoning and executing tools..."):
             try:
-                # Invoke LangGraph ReAct Agent and obtain sources from metadata
+                # Invoke LangGraph ReAct Agent
                 full_response, extracted_sources = agent_runner.process_query(
                     user_input=augmented_prompt,
                     chat_history=st.session_state.messages,
