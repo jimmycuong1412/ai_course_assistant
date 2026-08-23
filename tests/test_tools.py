@@ -1,6 +1,6 @@
 import json
 from unittest.mock import MagicMock
-from tools import execute_tool_call
+from src.agent.tools import execute_tool_call
 
 
 def test_execute_tool_call_success():

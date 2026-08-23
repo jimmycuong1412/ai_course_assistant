@@ -1,8 +1,8 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM Change to the script directory
-cd /d "%~dp0"
+REM Change directory to the project root (parent directory of scripts/)
+cd /d "%~dp0\.."
 
 REM Check if uv is available
 where uv >nul 2>&1
@@ -23,7 +23,8 @@ if %errorlevel% equ 0 (
     )
     
     echo Starting AI Course Assistant...
-    uv run streamlit run app.py --server.fileWatcherType none
+    set PYTHONPATH=.
+    uv run streamlit run src/app.py --server.fileWatcherType none
     goto end
 )
 
@@ -45,7 +46,8 @@ if errorlevel 1 (
 )
 
 echo Starting AI Course Assistant...
-python -m streamlit run app.py --server.fileWatcherType none
+set PYTHONPATH=.
+python -m streamlit run src/app.py --server.fileWatcherType none
 
 :end
 pause

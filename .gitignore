@@ -6,4 +6,4 @@ venv/
 .cache/
 *.log
 chroma_db/
-# .chromadb/
+tmp/
