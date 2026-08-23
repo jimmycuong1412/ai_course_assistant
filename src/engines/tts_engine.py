@@ -31,10 +31,17 @@ class TTSEngine:
         """
         Strips Markdown tags, code blocks, and formatting characters for clean speech synthesis.
         """
+        # 1. Remove multi-line code blocks
         clean = re.sub(r"```[\s\S]*?```", "", text)
-        clean = re.sub(r"`.*?`", "", clean)
-        clean = re.sub(r"[*_#>\-]", " ", clean)
-        return re.sub(r"\s+", " ", clean).strip()
+        # 2. Strip markdown symbols directly
+        clean = re.sub(r"[*_`~#>]", "", clean)
+        # 3. Replace list bullets with spaces
+        clean = re.sub(r"\s*[-+]\s+", " ", clean)
+        # 4. Collapse multiple whitespaces
+        clean = re.sub(r"\s+", " ", clean).strip()
+        # 5. Remove any accidental whitespace before punctuation marks
+        clean = re.sub(r"\s+([.,!?;:])", r"\1", clean)
+        return clean
 
     def synthesize(self, text: str) -> Optional[bytes]:
         """

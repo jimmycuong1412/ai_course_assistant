@@ -1,7 +1,7 @@
 """
-vector_store.py - Pinecone Vector Store manager integrated with LangChain.
+vector_store.py - Pinecone Vector Store manager with built-in Pinecone Inference Reranking.
 Handles Serverless index lifecycle, embedding generation via custom endpoints,
-document ingestion, and metadata-filtered similarity search.
+document ingestion, metadata-filtered similarity search, and default Two-Stage Re-ranking.
 """
 
 import os
@@ -19,7 +19,7 @@ from src.rag.document_processor import CourseDocumentProcessor
 
 class CourseVectorStore:
     """
-    Manages Pinecone Serverless Index and LangChain PineconeVectorStore integration.
+    Manages Pinecone Serverless Index, LangChain VectorStore integration, and Pinecone Inference Reranking.
     """
 
     def __init__(self, resources_dir: Path):
@@ -34,12 +34,15 @@ class CourseVectorStore:
         self.index_name = os.getenv("PINECONE_INDEX_NAME", "course-knowledge-index")
         self.cloud = os.getenv("PINECONE_CLOUD", "aws")
         self.region = os.getenv("PINECONE_REGION", "us-east-1")
-        self.dimension = 1536  # Dimension for text-embedding-3-small
+        self.dimension = 1536
+
+        # Reranker model configuration for Pinecone Inference API
+        self.rerank_model_name = os.getenv("PINECONE_RERANK_MODEL", "bge-reranker-v2-m3")
 
         # Track documents retrieved in the most recent search
         self.last_retrieved_docs: List[Document] = []
 
-        # Initialize Embeddings model pointing to endpoint
+        # Initialize Embeddings model
         self.embeddings = OpenAIEmbeddings(
             base_url=self.openai_endpoint,
             api_key=self.openai_api_key,
@@ -74,8 +77,6 @@ class CourseVectorStore:
                 metric="cosine",
                 spec=ServerlessSpec(cloud=self.cloud, region=self.region),
             )
-
-            # Wait until index is ready
             while not self.pc.describe_index(self.index_name).status["ready"]:
                 time.sleep(1)
             print(f"[✔] Pinecone index '{self.index_name}' is ready.\n")
@@ -96,7 +97,6 @@ class CourseVectorStore:
 
             if chunks:
                 print(f"[+] Upserting {len(chunks)} chunks into Pinecone...")
-                # Ingest documents in batches using LangChain vectorstore
                 self.vector_store.add_documents(documents=chunks)
                 print(f"[✔] Successfully ingested {len(chunks)} chunks into Pinecone!\n")
         else:
@@ -108,38 +108,65 @@ class CourseVectorStore:
         category: str = "all",
         doc_code: Optional[str] = None,
         top_k: int = 5,
+        fetch_k: int = 15,
     ) -> List[Document]:
         """
-        Performs semantic similarity search with optional metadata category and doc_code filtering.
-        Stores retrieved documents in self.last_retrieved_docs.
+        Performs Two-Stage Retrieval:
+        Stage 1: Retrieve wide candidate pool (fetch_k=15) via vector similarity.
+        Stage 2: Re-rank candidates down to top_k using Pinecone Inference API (bge-reranker-v2-m3).
         """
         if not query.strip():
             self.last_retrieved_docs = []
             return []
 
-        search_kwargs: Dict[str, Any] = {"k": top_k}
+        # Stage 1: Retrieval (Bi-Encoder)
+        search_kwargs: Dict[str, Any] = {"k": max(fetch_k, top_k)}
         filter_dict: Dict[str, Any] = {}
 
-        # 1. Apply category filter if specific
         if category and category.lower() != "all":
             filter_dict["category"] = category.lower()
 
-        # 2. Apply explicit doc_code filter if identified by Agent
-        if doc_code and doc_code.lower() != "all" and doc_code.lower() != "none":
+        if doc_code and doc_code.lower() not in ["all", "none"]:
             clean_code = doc_code.lower().strip().replace(" ", "_").replace("-", "_")
             filter_dict["doc_code"] = clean_code
 
         if filter_dict:
             search_kwargs["filter"] = filter_dict
 
-        results = self.vector_store.similarity_search(query=query, **search_kwargs)
+        candidate_docs = self.vector_store.similarity_search(query=query, **search_kwargs)
 
-        # Fallback: if restrictive metadata filter produces 0 results, retry without filter
-        if not results and filter_dict:
+        if not candidate_docs and filter_dict:
             print(f"   [VectorStore Fallback] Zero matches for filter {filter_dict}. Retrying search without filter...")
-            results = self.vector_store.similarity_search(query=query, k=top_k)
+            candidate_docs = self.vector_store.similarity_search(query=query, k=max(fetch_k, top_k))
 
-        # Store retrieved raw document objects directly
+        # Stage 2: Two-Stage Re-ranking via Pinecone Inference API
+        if len(candidate_docs) > top_k:
+            print(f"   [Pinecone Inference Rerank] Re-ranking {len(candidate_docs)} candidates down to Top {top_k} with '{self.rerank_model_name}'...")
+            try:
+                documents_payload = [{"text": doc.page_content} for doc in candidate_docs]
+
+                rerank_response = self.pc.inference.rerank(
+                    model=self.rerank_model_name,
+                    query=query,
+                    documents=documents_payload,
+                    top_n=top_k,
+                    return_documents=False,
+                )
+
+                reranked_docs = []
+                for item in rerank_response.data:
+                    idx = item.index
+                    original_doc = candidate_docs[idx]
+                    original_doc.metadata["rerank_score"] = round(float(item.score), 4)
+                    reranked_docs.append(original_doc)
+
+                results = reranked_docs
+            except Exception as e:
+                print(f"   [!] Pinecone Inference Rerank error: {e}. Falling back to standard top_k.")
+                results = candidate_docs[:top_k]
+        else:
+            results = candidate_docs[:top_k]
+
         self.last_retrieved_docs = results
         return results
 
@@ -148,28 +175,18 @@ class CourseVectorStore:
         Formats retrieved LangChain Document objects into structured context for the agent.
         """
         if not docs:
-            print("\n" + "=" * 80)
-            print("   [DEBUG - Pinecone Search Context] NO DOCUMENTS FOUND")
-            print("=" * 80 + "\n")
             return "No relevant course documents found matching the query."
 
         formatted_blocks = []
         for idx, doc in enumerate(docs, start=1):
             meta = doc.metadata
+            score_info = f" | Rerank Score: {meta.get('rerank_score')}" if "rerank_score" in meta else ""
             block = (
-                f"--- DOCUMENT {idx} ---\n"
+                f"--- DOCUMENT {idx}{score_info} ---\n"
                 f"File: {meta.get('source_file', 'Unknown')} (Page {meta.get('page_number', 'N/A')})\n"
                 f"Category: {meta.get('category', 'GENERAL').upper()} | Code: {meta.get('doc_code', 'N/A').upper()}\n"
                 f"Content:\n{doc.page_content}\n"
             )
             formatted_blocks.append(block)
 
-        formatted_context = "\n\n".join(formatted_blocks)
-
-        print("\n" + "=" * 80)
-        print(f"   [DEBUG - Pinecone Search Context] Retrieved {len(docs)} Document(s):")
-        print("=" * 80)
-        print(formatted_context)
-        print("=" * 80 + "\n")
-
-        return formatted_context
+        return "\n\n".join(formatted_blocks)
