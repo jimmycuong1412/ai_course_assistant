@@ -36,6 +36,9 @@ class CourseVectorStore:
         self.region = os.getenv("PINECONE_REGION", "us-east-1")
         self.dimension = 1536  # Dimension for text-embedding-3-small
 
+        # Track documents retrieved in the most recent search
+        self.last_retrieved_docs: List[Document] = []
+
         # Initialize Embeddings model pointing to endpoint
         self.embeddings = OpenAIEmbeddings(
             base_url=self.openai_endpoint,
@@ -108,8 +111,10 @@ class CourseVectorStore:
     ) -> List[Document]:
         """
         Performs semantic similarity search with optional metadata category and doc_code filtering.
+        Stores retrieved documents in self.last_retrieved_docs.
         """
         if not query.strip():
+            self.last_retrieved_docs = []
             return []
 
         search_kwargs: Dict[str, Any] = {"k": top_k}
@@ -134,6 +139,8 @@ class CourseVectorStore:
             print(f"   [VectorStore Fallback] Zero matches for filter {filter_dict}. Retrying search without filter...")
             results = self.vector_store.similarity_search(query=query, k=top_k)
 
+        # Store retrieved raw document objects directly
+        self.last_retrieved_docs = results
         return results
 
     def format_search_results(self, docs: List[Document]) -> str:

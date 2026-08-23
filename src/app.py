@@ -1,7 +1,7 @@
 """
 app.py - Main Streamlit UI for the AI Course Assistant.
 Combines Pinecone Vector Store, LangGraph ReAct Agent, Tavily Search,
-Multimodal Vision Analysis, and Text-to-Speech synthesis.
+Multimodal Vision Analysis, and Text-to-Speech synthesis with Document Citations.
 """
 
 from pathlib import Path
@@ -94,6 +94,10 @@ for message in st.session_state.messages:
             st.markdown(message["content"])
             if message.get("image_bytes"):
                 st.image(message["image_bytes"], width=300)
+            if message.get("sources"):
+                with st.expander("📚 Referenced Course Materials", expanded=False):
+                    for src in message["sources"]:
+                        st.markdown(f"* 📄 **{src['file']}** *(Pages: {src['pages']})*")
             if message.get("audio"):
                 st.audio(message["audio"], format="audio/mp3")
 
@@ -131,18 +135,25 @@ if user_input or uploaded_image:
     with st.chat_message("assistant"):
         response_placeholder = st.empty()
         audio_bytes = None
+        extracted_sources = []
 
         with st.spinner("Agent is reasoning and executing tools..."):
             try:
-                # Invoke LangGraph ReAct Agent
-                full_response = agent_runner.process_query(
+                # Invoke LangGraph ReAct Agent and obtain sources from metadata
+                full_response, extracted_sources = agent_runner.process_query(
                     user_input=augmented_prompt,
                     chat_history=st.session_state.messages,
                     max_history_turns=10,
                 )
                 response_placeholder.markdown(full_response)
 
-                # Synthesize TTS Audio if enabled
+                # Render Citations in an Expander if sources are present
+                if extracted_sources:
+                    with st.expander("📚 Referenced Course Materials", expanded=False):
+                        for src in extracted_sources:
+                            st.markdown(f"* 📄 **{src['file']}** *(Pages: {src['pages']})*")
+
+                # Synthesize TTS Audio strictly for the main textual answer
                 if enable_tts and full_response:
                     try:
                         audio_bytes = tts_engine.synthesize(full_response)
@@ -158,7 +169,11 @@ if user_input or uploaded_image:
 
     # Append Assistant Message to History
     if full_response:
-        assistant_entry = {"role": "assistant", "content": full_response}
+        assistant_entry = {
+            "role": "assistant",
+            "content": full_response,
+            "sources": extracted_sources,
+        }
         if audio_bytes:
             assistant_entry["audio"] = audio_bytes
         st.session_state.messages.append(assistant_entry)
