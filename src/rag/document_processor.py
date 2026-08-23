@@ -1,10 +1,11 @@
 """
 document_processor.py - Document loading and semantic text splitting pipeline.
-Uses LangChain PyPDFLoader and RecursiveCharacterTextSplitter with enriched metadata.
+Uses LangChain PyPDFLoader and RecursiveCharacterTextSplitter with post-split enriched metadata.
 """
 
+import re
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -36,20 +37,34 @@ class CourseDocumentProcessor:
     def _determine_category(self, relative_path: Path) -> str:
         """
         Infers document category based on the relative directory structure.
+        Ensures guidelines are prioritized before assignments to prevent misclassification.
         """
         path_str = str(relative_path).lower()
-        if "assignment" in path_str:
-            return "assignments"
+        if "guideline" in path_str or "guide" in path_str:
+            return "guidelines"
         elif "workshop" in path_str:
             return "workshops"
-        elif "guideline" in path_str or "guide" in path_str:
-            return "guidelines"
+        elif "assignment" in path_str:
+            return "assignments"
         return "general"
+
+    def _extract_doc_code(self, filename: str) -> str:
+        """
+        Extracts standardized identifier codes (e.g., 'assignment_10', 'workshop_04').
+        """
+        fn = filename.lower()
+        match_asg = re.search(r"assignment\s*0?(\d+)", fn)
+        if match_asg:
+            return f"assignment_{int(match_asg.group(1)):02d}"
+        match_ws = re.search(r"workshop\s*0?(\d+)", fn)
+        if match_ws:
+            return f"workshop_{int(match_ws.group(1)):02d}"
+        return "other"
 
     def load_and_split_documents(self) -> List[Document]:
         """
-        Traverses resources_dir for all PDF files, loads content page-by-page,
-        enriches metadata, and splits documents into optimal chunks for embedding.
+        Traverses resources_dir for all PDF files, loads raw text content,
+        splits documents into semantic chunks, and attaches contextual headers post-splitting.
         """
         if not self.resources_dir.exists():
             print(f"[!] Warning: Resources directory '{self.resources_dir}' not found.")
@@ -67,22 +82,22 @@ class CourseDocumentProcessor:
         for pdf_path in all_pdf_paths:
             rel_path = pdf_path.relative_to(self.resources_dir)
             category = self._determine_category(rel_path)
+            doc_code = self._extract_doc_code(rel_path.name)
 
             try:
                 loader = PyPDFLoader(str(pdf_path))
                 pages = loader.load()
 
                 for page in pages:
-                    # Clean extracted page text
                     text = page.page_content.strip()
                     if not text or len(text) < 20:
                         continue
 
-                    # Enrich metadata with explicit categorization and origin tracking
                     page_num = page.metadata.get("page", 0) + 1  # 1-based index
                     page.metadata.update(
                         {
                             "category": category,
+                            "doc_code": doc_code,
                             "source_file": rel_path.name,
                             "rel_path": str(rel_path),
                             "page_number": page_num,
@@ -96,14 +111,25 @@ class CourseDocumentProcessor:
             except Exception as exc:
                 print(f"    [X] Failed loading '{pdf_path.name}': {exc}")
 
-        # Split loaded pages into smaller semantic chunks
+        # 1. Split actual document content first to prevent header detachment
         split_chunks = self.text_splitter.split_documents(raw_pages)
 
-        # Assign unique chunk_id to each chunk
+        # 2. Attach context headers and metadata post-splitting
+        valid_chunks: List[Document] = []
         for idx, chunk in enumerate(split_chunks, start=1):
-            source_stem = Path(chunk.metadata.get("source_file", "doc")).stem
+            source_file = chunk.metadata.get("source_file", "doc")
+            doc_code = chunk.metadata.get("doc_code", "other")
             page_num = chunk.metadata.get("page_number", 1)
-            chunk.metadata["chunk_id"] = f"{source_stem}_p{page_num}_c{idx}"
+            category = chunk.metadata.get("category", "general")
 
-        print(f"[✔] Total processed: {len(raw_pages)} pages -> {len(split_chunks)} semantic chunks.\n")
-        return split_chunks
+            chunk.metadata["chunk_id"] = f"{Path(source_file).stem}_p{page_num}_c{idx}"
+
+            # Prepend a compact context header directly to chunk content
+            chunk.page_content = (
+                f"Document: {source_file} | Category: {category.upper()} | Code: {doc_code.upper()}\n"
+                f"{chunk.page_content.strip()}"
+            )
+            valid_chunks.append(chunk)
+
+        print(f"[✔] Total processed: {len(raw_pages)} pages -> {len(valid_chunks)} semantic chunks.\n")
+        return valid_chunks

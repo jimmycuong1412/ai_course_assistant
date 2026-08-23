@@ -36,7 +36,7 @@ class CourseVectorStore:
         self.region = os.getenv("PINECONE_REGION", "us-east-1")
         self.dimension = 1536  # Dimension for text-embedding-3-small
 
-        # Initialize Embeddings model trỏ về custom endpoint
+        # Initialize Embeddings model pointing to endpoint
         self.embeddings = OpenAIEmbeddings(
             base_url=self.openai_endpoint,
             api_key=self.openai_api_key,
@@ -100,27 +100,50 @@ class CourseVectorStore:
             print(f"[✔] Pinecone contains {total_vectors} existing vectors. Ready for queries.\n")
 
     def search(
-        self, query: str, category: str = "all", top_k: int = 5
+        self,
+        query: str,
+        category: str = "all",
+        doc_code: Optional[str] = None,
+        top_k: int = 5,
     ) -> List[Document]:
         """
-        Performs semantic similarity search with optional metadata category filtering.
+        Performs semantic similarity search with optional metadata category and doc_code filtering.
         """
         if not query.strip():
             return []
 
         search_kwargs: Dict[str, Any] = {"k": top_k}
+        filter_dict: Dict[str, Any] = {}
 
-        # Apply metadata filter if specific category is requested
+        # 1. Apply category filter if specific
         if category and category.lower() != "all":
-            search_kwargs["filter"] = {"category": category.lower()}
+            filter_dict["category"] = category.lower()
 
-        return self.vector_store.similarity_search(query=query, **search_kwargs)
+        # 2. Apply explicit doc_code filter if identified by Agent
+        if doc_code and doc_code.lower() != "all" and doc_code.lower() != "none":
+            clean_code = doc_code.lower().strip().replace(" ", "_").replace("-", "_")
+            filter_dict["doc_code"] = clean_code
+
+        if filter_dict:
+            search_kwargs["filter"] = filter_dict
+
+        results = self.vector_store.similarity_search(query=query, **search_kwargs)
+
+        # Fallback: if restrictive metadata filter produces 0 results, retry without filter
+        if not results and filter_dict:
+            print(f"   [VectorStore Fallback] Zero matches for filter {filter_dict}. Retrying search without filter...")
+            results = self.vector_store.similarity_search(query=query, k=top_k)
+
+        return results
 
     def format_search_results(self, docs: List[Document]) -> str:
         """
         Formats retrieved LangChain Document objects into structured context for the agent.
         """
         if not docs:
+            print("\n" + "=" * 80)
+            print("   [DEBUG - Pinecone Search Context] NO DOCUMENTS FOUND")
+            print("=" * 80 + "\n")
             return "No relevant course documents found matching the query."
 
         formatted_blocks = []
@@ -129,9 +152,17 @@ class CourseVectorStore:
             block = (
                 f"--- DOCUMENT {idx} ---\n"
                 f"File: {meta.get('source_file', 'Unknown')} (Page {meta.get('page_number', 'N/A')})\n"
-                f"Category: {meta.get('category', 'GENERAL').upper()}\n"
+                f"Category: {meta.get('category', 'GENERAL').upper()} | Code: {meta.get('doc_code', 'N/A').upper()}\n"
                 f"Content:\n{doc.page_content}\n"
             )
             formatted_blocks.append(block)
 
-        return "\n\n".join(formatted_blocks)
+        formatted_context = "\n\n".join(formatted_blocks)
+
+        print("\n" + "=" * 80)
+        print(f"   [DEBUG - Pinecone Search Context] Retrieved {len(docs)} Document(s):")
+        print("=" * 80)
+        print(formatted_context)
+        print("=" * 80 + "\n")
+
+        return formatted_context

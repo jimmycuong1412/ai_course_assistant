@@ -19,24 +19,32 @@ def create_course_search_tool(vector_store: CourseVectorStore) -> BaseTool:
     def search_course_knowledge(
         query: str,
         category: Optional[str] = "all",
+        doc_code: Optional[str] = None,
     ) -> str:
         """
         Search and retrieve factual information from internal course materials, including
         Assignments (requirements, tasks), Workshops, and Guidelines/How-to documents.
 
         Args:
-            query (str): Detailed search keywords or user query phrase.
+            query (str): The search keywords or semantic question IN ENGLISH (e.g. 'summary objectives deliverables', 'vector database configuration') even if user query is in Vietnamese.
             category (str, optional): Scope filter. Allowed values: 'all', 'assignments', 'workshops', 'guidelines'. Default is 'all'.
+            doc_code (str, optional): Target specific assignment/workshop code if identified in user prompt (e.g., 'assignment_10', 'assignment_03', 'workshop_04'). Leave as None if general.
 
         Returns:
             str: Formatted context blocks containing relevant document excerpts.
         """
-        print(f"\n   [Tool Call] 'search_course_knowledge' | Query: '{query}' | Category: '{category}'")
+        print(f"\n   [Tool Call] 'search_course_knowledge' | Query: '{query}' | Category: '{category}' | Doc Code: '{doc_code}'")
 
-        results = vector_store.search(query=query, category=category or "all", top_k=4)
+        results = vector_store.search(
+            query=query,
+            category=category or "all",
+            doc_code=doc_code,
+            top_k=5,
+        )
+
         formatted_context = vector_store.format_search_results(results)
 
-        print(f"   [Tool Result] Retrieved {len(results)} chunk(s) from Pinecone Vector Store.")
+        print(f"   [Tool Result] Retrieved {len(results)} chunk(s). Sources: {[d.metadata.get('source_file') for d in results]}")
         return formatted_context
 
     return search_course_knowledge
@@ -51,7 +59,6 @@ def create_tavily_search_tool() -> Optional[BaseTool]:
         print("[!] Warning: TAVILY_API_KEY not configured. Web search tool disabled.")
         return None
 
-    # Ensure environment variable is set for the wrapper
     os.environ["TAVILY_API_KEY"] = tavily_api_key
 
     return TavilySearch(
