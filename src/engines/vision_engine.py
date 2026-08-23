@@ -6,6 +6,7 @@ Uses LangChain ChatOpenAI with structured output extraction.
 import base64
 import os
 from typing import Optional
+from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
@@ -43,7 +44,7 @@ class VisionEngine:
 
     def analyze_image_bytes(self, image_bytes: bytes, user_note: str = "") -> str:
         """
-        Encodes raw image bytes to base64 and invokes multimodal LLM to extract structured context.
+        Encodes raw image bytes to base64 and invokes multimodal LLM to extract structured context for user queries.
         """
         encoded_image = base64.b64encode(image_bytes).decode("utf-8")
 
@@ -88,3 +89,40 @@ class VisionEngine:
         except Exception as e:
             print(f"[X] Vision Analysis Error: {e}")
             return f"[Uploaded Image Analysis Failed]: {e}"
+
+    def describe_document_image(self, image_bytes: bytes) -> str:
+        """
+        Transcribes UI screenshots, steps, form fields, and diagrams extracted from course PDFs.
+        """
+        encoded_image = base64.b64encode(image_bytes).decode("utf-8")
+
+        messages = [
+            SystemMessage(
+                content=(
+                    "You are a technical document assistant. Your job is to extract all meaningful information "
+                    "from screenshots, slides, or UI guides found in technical PDF documents."
+                )
+            ),
+            HumanMessage(
+                content=[
+                    {
+                        "type": "text",
+                        "text": (
+                            "Describe this technical document screenshot concisely. Transcribe any visible text, "
+                            "UI buttons, input labels, URL paths, command outputs, or step-by-step instructions shown."
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{encoded_image}"},
+                    },
+                ]
+            ),
+        ]
+
+        try:
+            response = self.llm.invoke(messages)
+            return response.content.strip()
+        except Exception as exc:
+            print(f"        [!] Document Image Analysis Error: {exc}")
+            return ""

@@ -1,19 +1,21 @@
 """
 document_processor.py - Document loading and semantic text splitting pipeline.
-Uses LangChain PyPDFLoader and RecursiveCharacterTextSplitter with post-split enriched metadata.
+Uses PyMuPDF (fitz) for high-performance extraction, optional Vision OCR for screenshots,
+and RecursiveCharacterTextSplitter with post-split enriched metadata.
 """
 
 import re
 from pathlib import Path
-from typing import List
-from langchain_community.document_loaders import PyPDFLoader
+from typing import List, Optional
+import fitz  # PyMuPDF
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from src.engines.vision_engine import VisionEngine
 
 
 class CourseDocumentProcessor:
     """
-    Handles PDF ingestion, categorization, semantic chunking, and metadata enrichment.
+    Handles PDF ingestion, categorization, multimodal screenshot OCR, semantic chunking, and metadata enrichment.
     """
 
     def __init__(
@@ -21,10 +23,13 @@ class CourseDocumentProcessor:
         resources_dir: Path,
         chunk_size: int = 800,
         chunk_overlap: int = 150,
+        enable_image_analysis: bool = True,
     ):
         self.resources_dir = resources_dir
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.enable_image_analysis = enable_image_analysis
+        self.vision_engine = VisionEngine() if enable_image_analysis else None
 
         # Initialize recursive character text splitter with natural boundary separators
         self.text_splitter = RecursiveCharacterTextSplitter(
@@ -63,7 +68,7 @@ class CourseDocumentProcessor:
 
     def load_and_split_documents(self) -> List[Document]:
         """
-        Traverses resources_dir for all PDF files, loads raw text content,
+        Traverses resources_dir for all PDF files, loads text and extracts screenshot descriptions,
         splits documents into semantic chunks, and attaches contextual headers post-splitting.
         """
         if not self.resources_dir.exists():
@@ -85,28 +90,49 @@ class CourseDocumentProcessor:
             doc_code = self._extract_doc_code(rel_path.name)
 
             try:
-                loader = PyPDFLoader(str(pdf_path))
-                pages = loader.load()
+                doc = fitz.open(pdf_path)
+                for page_idx, page in enumerate(doc):
+                    page_num = page_idx + 1
+                    page_text = page.get_text("text").strip()
 
-                for page in pages:
-                    text = page.page_content.strip()
-                    if not text or len(text) < 20:
+                    # Extract screenshots from Guidelines & Workshops if image analysis is enabled
+                    image_descriptions: List[str] = []
+                    if self.enable_image_analysis and self.vision_engine:
+                        image_list = page.get_images(full=True)
+                        for img_info in image_list:
+                            xref = img_info[0]
+                            base_image = doc.extract_image(xref)
+                            width, height = base_image.get("width", 0), base_image.get("height", 0)
+
+                            # Skip small icons, badges, and decorative graphics (< 150px)
+                            if width > 150 and height > 150:
+                                img_bytes = base_image["image"]
+                                desc = self.vision_engine.describe_document_image(img_bytes)
+                                if desc:
+                                    image_descriptions.append(f"[Visual Screenshot Note: {desc}]")
+
+                    combined_text = page_text
+                    if image_descriptions:
+                        combined_text += "\n\n" + "\n".join(image_descriptions)
+
+                    if not combined_text or len(combined_text) < 20:
                         continue
 
-                    page_num = page.metadata.get("page", 0) + 1  # 1-based index
-                    page.metadata.update(
-                        {
-                            "category": category,
-                            "doc_code": doc_code,
-                            "source_file": rel_path.name,
-                            "rel_path": str(rel_path),
-                            "page_number": page_num,
-                        }
+                    raw_pages.append(
+                        Document(
+                            page_content=combined_text,
+                            metadata={
+                                "category": category,
+                                "doc_code": doc_code,
+                                "source_file": rel_path.name,
+                                "rel_path": str(rel_path),
+                                "page_number": page_num,
+                            },
+                        )
                     )
-                    page.page_content = text
-                    raw_pages.append(page)
 
-                print(f"    [✔] Loaded '{rel_path.name}' ({len(pages)} pages)")
+                print(f"    [✔] Loaded '{rel_path.name}' ({len(doc)} pages)")
+                doc.close()
 
             except Exception as exc:
                 print(f"    [X] Failed loading '{pdf_path.name}': {exc}")

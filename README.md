@@ -8,12 +8,14 @@ An enterprise-grade, multi-turn **Retrieval-Augmented Generation (RAG)** chatbot
 
 | Feature / Component | Workshop 3 (Baseline) | Workshop 4 (Upgraded System) |
 | :--- | :--- | :--- |
-| **Vector Database** | Local ChromaDB with basic vector ingestion. | **Pinecone Serverless Vector Store** with cosine similarity and metadata filtering (`category`, `page`, `source_file`). |
-| **Document Processing** | PyMuPDF (`fitz`) manual page reading and slicing. | **`PyPDFLoader`** + **`RecursiveCharacterTextSplitter`** with chunk overlaps and enriched chunk-level metadata. |
-| **Agent Orchestration** | Manual tool-calling loop via direct OpenAI chat completions. | **LangGraph ReAct Agent (`create_react_agent`)** with autonomous reasoning, tool selection, and execution. |
-| **Prompt Engineering** | Raw string system prompt. | **LangChain `ChatPromptTemplate`**, `FewShotChatMessagePromptTemplate`, and `MessagesPlaceholder`. |
+| **Vector Database** | Local ChromaDB with basic vector ingestion. | **Pinecone Serverless Vector Store** with cosine similarity and enriched metadata filtering (`category`, `doc_code`, `page_number`, `source_file`). |
+| **Document & Slide Parsing** | PyMuPDF (`fitz`) basic manual page text slicing. | **PyMuPDF Engine (`fitz`) + Multimodal Vision OCR**: High-performance layout reading for PPT/PDFs with automated screenshot transcription via `gpt-4o-mini` before splitting. |
+| **Retrieval Precision** | Raw dense vector similarity without query classification. | **Self-Querying Parameterization**: ReAct Agent dynamically formulates English semantic queries (`query`) while extracting explicit target identifiers (`doc_code`, `category`) to eliminate cross-document retrieval confusion. |
+| **Chunk Enrichment** | Basic page-level chunking. | **Post-Split Context Attachment**: Injects compact standardized headers (`Document`, `Category`, `Code`) onto chunks *after* splitting, preventing empty header fragmentation. |
+| **Agent Orchestration** | Manual tool-calling loop via direct OpenAI chat completions. | **LangGraph ReAct Agent (`create_react_agent`)** with autonomous multi-step reasoning, tool execution, and dynamic query translation. |
+| **Prompt Engineering** | Raw string system prompt. | **LangChain `ChatPromptTemplate`**, `FewShotChatMessagePromptTemplate`, and `MessagesPlaceholder` with Chain-of-Thought reasoning guidelines. |
 | **External Real-time Data** | None (Limited strictly to internal course documents). | **Tavily Web Search Tool** for live web intelligence, library breaking changes, and external API documentation. |
-| **Multimodal Capabilities** | Text-only query support. | **Multimodal Vision Engine** via `gpt-4o-mini` with Pydantic Structured Outputs to debug screenshot errors and inspect architecture diagrams. |
+| **Multimodal Capabilities** | Text-only query support. | **Multimodal Vision Engine** via `gpt-4o-mini` with Pydantic Structured Outputs to debug user-submitted screenshot errors and inspect architecture diagrams. |
 | **Memory Management** | Full unconstrained message history appending. | **Bounded Sliding Window Conversation Memory** (preserving the most recent 10 turns to conserve token budget). |
 
 ---
@@ -94,15 +96,15 @@ scripts\start.bat
                                               |
                                               v
                                  +-------------------------+
-                                 |  Streamlit UI (app.py)  |
+                                 | Streamlit UI (src/app.py)|
                                  +------------+------------+
                                               |
                      +------------------------+------------------------+
-                     | (Image Uploaded)                                | (Text / Augmented Prompt)
+                     | (User Screenshot Uploaded)                      | (Text / Augmented Prompt)
                      v                                                 v
         +-------------------------+                       +-------------------------+
         |      VisionEngine       |                       |   CourseAgentRunner     |
-        |   (vision_engine.py)    |                       |   (agent_runner.py)     |
+        | (src/engines/vision...) |                       | (src/agent/agent_runner)|
         | (Structured Extraction) |                       | (LangGraph ReAct Loop)  |
         +------------+------------+                       +------------+------------+
                      |                                                 |
@@ -113,26 +115,25 @@ scripts\start.bat
                                             v                                                     v
                             +-------------------------------+                     +-------------------------------+
                             |   search_course_knowledge     |                     |         TavilySearch          |
-                            |          (tools.py)           |                     |          (tools.py)           |
+                            |     (src/agent/tools.py)      |                     |     (src/agent/tools.py)      |
                             +---------------+---------------+                     +---------------+---------------+
                                             |                                                     |
                                             v                                                     v
                             +-------------------------------+                     +-------------------------------+
                             |    Pinecone Vector Store      |                     |      Live Web Intelligence    |
-                            |       (vector_store.py)       |                     |       (External Web API)      |
+                            |   (src/rag/vector_store.py)   |                     |       (External Web API)      |
                             +---------------+---------------+                     +-------------------------------+
                                             |
                                             v
                             +-------------------------------+
-                            |     PyPDFLoader + Splitter    |
-                            |    (document_processor.py)    |
+                            | PyMuPDF + Document Ingestion  |
+                            | (src/rag/document_processor)  |
                             +---------------+---------------+
                                             |
                                             v
                             +-------------------------------+
                             |    Course PDFs (resources/)   |
                             +-------------------------------+
-
 ```
 
 ---
@@ -158,7 +159,7 @@ workshop4/
 │   │   └── vision_engine.py    # Multimodal Vision Analyzer with Structured Output
 │   ├── rag/                    # Data processing & Vector Database
 │   │   ├── __init__.py
-│   │   ├── document_processor.py # PDF Loader (PyPDFLoader) & Semantic Text Splitter
+│   │   ├── document_processor.py # PDF Loader (PyMuPDF) & Semantic Text Splitter
 │   │   └── vector_store.py     # Pinecone Serverless Vector Store & Similarity Search
 │   ├── __init__.py
 │   └── app.py                  # Main Streamlit Web Application
@@ -175,13 +176,18 @@ workshop4/
 
 ## 💡 Methodology & Approach Explanation
 
-1. **Semantic Chunking & Metadata Enrichment:**
-    - Utilizes `PyPDFLoader` to extract page-level context and `RecursiveCharacterTextSplitter` with natural boundary separators (`\n\n`, `\n`, `. `) to prevent mid-sentence truncation.
-    - Attaches structural metadata (`category`, `source_file`, `page_number`, `chunk_id`) to every chunk to enable filtered vector retrieval.
+1. **High-Fidelity Document & Visual Ingestion:**
+    - Employs **PyMuPDF (`fitz`)** for native bounding-box layout parsing across converted PowerPoint slides (Workshops) and PDF guidelines.
+    - Automates image inspection by extracting embedded screenshots and transcribing UI elements, code snippets, and button actions using `VisionEngine` (`gpt-4o-mini`) directly during the document ingestion phase.
 
-2. **Autonomous Tool Routing (ReAct Agent Pattern):**
-    - Employs `create_react_agent` from `langgraph.prebuilt` coupled with `ChatOpenAI`.
-    - The model dynamically cycles through Thought $\rightarrow$ Action $\rightarrow$ Observation phases, deciding whether to query Pinecone, query Tavily, or answer directly.
+2. **Semantic Chunking & Post-Split Context Enrichment:**
+    - Applies `RecursiveCharacterTextSplitter` on clean body text to preserve natural paragraph and sentence boundaries.
+    - Injects standardized metadata headers (`Document: ... | Category: ... | Code: ...`) directly onto chunks *after* splitting, ensuring every chunk retains document identity without generating empty header fragments.
 
-3. **Multimodal Vision Integration:**
-    - Converts uploaded images to Base64 data streams and analyzes them using `ChatOpenAI` with Pydantic Structured Outputs (`VisionAnalysisResponse`), extracting actionable error details before agent processing.
+3. **Self-Querying Parameterized Retrieval:**
+    - Provides structured parameter hooks (`query`, `category`, `doc_code`) in `search_course_knowledge`.
+    - The ReAct Agent isolates document identifiers (e.g., `"Assignment 10"` $\rightarrow$ `doc_code="assignment_10"`) and converts semantic intent into enriched English search terms, ensuring zero cross-document vector drift.
+
+4. **Autonomous Multi-Tool Orchestration:**
+    - Powered by `create_react_agent` from `langgraph.prebuilt`.
+    - Cycles through Thought $\rightarrow$ Action $\rightarrow$ Observation phases to dynamically choose between internal course knowledge retrieval, external live research (`Tavily`), or interactive clarification.
