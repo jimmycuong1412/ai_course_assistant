@@ -10,6 +10,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from src.agent.agent_runner import CourseAgentRunner
+from src.agent.followup_generator import STARTER_QUESTIONS, FollowUpGenerator
 from src.engines.tts_engine import TTSEngine
 from src.rag.vector_store import CourseVectorStore
 from src.engines.vision_engine import VisionEngine
@@ -47,10 +48,39 @@ def get_tts_engine() -> TTSEngine:
     return TTSEngine()
 
 
+@st.cache_resource(show_spinner="Initializing Follow-up Suggestion Engine...")
+def get_followup_generator() -> FollowUpGenerator:
+    return FollowUpGenerator(RESOURCES_DIR)
+
+
 vector_store = get_vector_store()
 agent_runner = get_agent_runner(vector_store)
 vision_engine = get_vision_engine()
 tts_engine = get_tts_engine()
+followup_generator = get_followup_generator()
+
+
+def suggestion_caption(is_on_topic: bool) -> str:
+    """Labels the chips as a natural next step, or as a nudge back to the course."""
+    if is_on_topic:
+        return "💡 Suggested follow-up questions:"
+    return "🎓 That is outside this course - here is what I can help you with:"
+
+
+def render_suggestion_chips(questions: list, key_prefix: str) -> None:
+    """
+    Renders clickable question chips. A click stores the question in session state and
+    reruns, so it enters the pipeline exactly like a manually typed chat message
+    (st.chat_input cannot be populated programmatically).
+    """
+    if not questions:
+        return
+
+    columns = st.columns(len(questions))
+    for idx, question in enumerate(questions):
+        if columns[idx].button(question, key=f"{key_prefix}_{idx}", use_container_width=True):
+            st.session_state.pending_input = question
+            st.rerun()
 
 
 # ==============================================================================
@@ -89,8 +119,21 @@ with st.sidebar:
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Capture chat input before rendering history so stale suggestion chips can be hidden while
+# a new turn is being generated (st.chat_input always renders pinned to the bottom of the page).
+typed_input = st.chat_input("Ask about assignments, workshops, code errors, or external technical topics...")
+user_input = typed_input or st.session_state.pop("pending_input", None)
+
+# A file_uploader keeps returning the same file on every rerun, so only an image that has
+# not been answered yet counts as new input. It is still attached to a typed question.
+image_is_new = bool(uploaded_image) and (
+    uploaded_image.file_id != st.session_state.get("processed_image_id")
+)
+is_new_turn = bool(user_input or image_is_new)
+
 # Display previous conversation messages
-for message in st.session_state.messages:
+last_message_index = len(st.session_state.messages) - 1
+for message_index, message in enumerate(st.session_state.messages):
     role = message.get("role")
     content = message.get("content")
 
@@ -121,23 +164,44 @@ for message in st.session_state.messages:
                     for src in message["sources"]:
                         st.markdown(f"* 📄 **{src['file']}** *(Pages: {src['pages']})*")
 
-            # Render audio player
+            # Render audio player. The one-shot "autoplay" flag is consumed on the first
+            # render after synthesis so the clip does not replay on later reruns.
             if message.get("audio"):
-                st.audio(message["audio"], format="audio/mp3")
+                st.audio(
+                    message["audio"],
+                    format="audio/mp3",
+                    autoplay=message.pop("autoplay", False),
+                )
+
+            # Offer follow-up suggestions only for the newest answer, and only while no
+            # new turn is already being generated below.
+            if (
+                role == "assistant"
+                and message_index == last_message_index
+                and not is_new_turn
+                and message.get("followups")
+            ):
+                st.caption(suggestion_caption(message.get("followups_on_topic", True)))
+                render_suggestion_chips(message["followups"], key_prefix=f"followup_hist_{message_index}")
+
+
+# Cold-start prompts shown before the first question of a session
+if not st.session_state.messages and not is_new_turn:
+    st.caption("👋 New chat - try one of these to get started:")
+    render_suggestion_chips(STARTER_QUESTIONS, key_prefix="starter")
 
 
 # ==============================================================================
 # Step 4: User Query Processing & Real-Time Streaming Loop
 # ==============================================================================
-user_input = st.chat_input("Ask about assignments, workshops, code errors, or external technical topics...")
-
-if user_input or uploaded_image:
+if is_new_turn:
     current_prompt = user_input or "Please inspect this uploaded image and provide guidance."
     image_bytes_to_store = None
     augmented_prompt = current_prompt
 
     # Process uploaded image if available
     if uploaded_image:
+        st.session_state.processed_image_id = uploaded_image.file_id
         image_bytes = uploaded_image.read()
         image_bytes_to_store = image_bytes
         with st.spinner("Analyzing uploaded image with Multimodal Vision..."):
@@ -161,6 +225,9 @@ if user_input or uploaded_image:
         extracted_sources = []
         thought_log = []
         audio_bytes = None
+        followup_questions = []
+        followups_on_topic = True
+        agent_failed = False
 
         # Container for Real-Time Execution Updates
         with st.status("🧠 Agent is coordinating tools and reasoning...", expanded=True) as status_box:
@@ -209,6 +276,7 @@ if user_input or uploaded_image:
 
             except Exception as err:
                 status_box.update(label="❌ An error occurred during agent execution", state="error")
+                agent_failed = True
                 final_response_text = f"An error occurred while executing the agent: {err}"
                 st.error(final_response_text)
                 print(f"[X] Agent Runner Streaming Error: {err}")
@@ -223,12 +291,26 @@ if user_input or uploaded_image:
                     for src in extracted_sources:
                         st.markdown(f"* 📄 **{src['file']}** *(Pages: {src['pages']})*")
 
+            # Generate contextual follow-up suggestions. They are persisted with the turn
+            # and rendered by the history loop, not here.
+            if not agent_failed:
+                used_web_search = any(
+                    step.get("tool") == "tavily_search" for step in thought_log
+                )
+                with st.spinner("Preparing follow-up suggestions..."):
+                    followup_result = followup_generator.generate(
+                        user_question=current_prompt,
+                        assistant_answer=final_response_text,
+                        sources=extracted_sources,
+                        used_web_search=used_web_search,
+                    )
+                followup_questions = followup_result.questions
+                followups_on_topic = followup_result.is_on_topic
+
             # Synthesize TTS Audio strictly for the main textual answer
             if enable_tts:
                 try:
                     audio_bytes = tts_engine.synthesize(final_response_text)
-                    if audio_bytes:
-                        st.audio(audio_bytes, format="audio/mp3", autoplay=autoplay_audio)
                 except Exception as tts_err:
                     print(f"[LOG] TTS Warning: {tts_err}")
 
@@ -239,7 +321,15 @@ if user_input or uploaded_image:
             "content": final_response_text,
             "sources": extracted_sources,
             "thought_log": thought_log,
+            "followups": followup_questions,
+            "followups_on_topic": followups_on_topic,
         }
         if audio_bytes:
             assistant_entry["audio"] = audio_bytes
+            assistant_entry["autoplay"] = autoplay_audio
         st.session_state.messages.append(assistant_entry)
+
+        # Re-render the completed turn through the history loop above. Keeping a single
+        # render path is what prevents duplicated audio players and stale chips: Streamlit
+        # replaces elements by position, so two differently ordered paths cannot align.
+        st.rerun()

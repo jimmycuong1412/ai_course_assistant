@@ -56,6 +56,7 @@ class CourseAgentRunner:
             return []
 
         sources_map: Dict[str, set] = {}
+        metadata_map: Dict[str, Dict[str, str]] = {}
         for doc in docs:
             meta = doc.metadata
             file_name = meta.get("source_file", "Unknown")
@@ -69,6 +70,12 @@ class CourseAgentRunner:
                 sources_map[file_name] = set()
             sources_map[file_name].add(page_str)
 
+            # Retain document identifiers used to ground follow-up question suggestions
+            metadata_map.setdefault(file_name, {
+                "code": str(meta.get("doc_code", "")),
+                "category": str(meta.get("category", "")),
+            })
+
         structured_sources: List[Dict[str, str]] = []
         for file_name, pages in sources_map.items():
             try:
@@ -79,6 +86,8 @@ class CourseAgentRunner:
             structured_sources.append({
                 "file": file_name,
                 "pages": ", ".join(sorted_pages),
+                "code": metadata_map.get(file_name, {}).get("code", ""),
+                "category": metadata_map.get(file_name, {}).get("category", ""),
             })
 
         return structured_sources
