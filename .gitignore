@@ -1,0 +1,10 @@
+.env
+.venv312
+__pycache__/
+*.pyc
+.venv/
+venv/
+.cache/
+*.log
+chroma_db/
+tmp/
