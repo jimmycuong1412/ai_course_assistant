@@ -9,10 +9,21 @@ from typing import Any, Dict, Generator, List
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_openai import ChatOpenAI
 from langgraph.prebuilt import create_react_agent
+from pydantic import BaseModel, Field
 
 from src.agent.prompts import SYSTEM_INSTRUCTION
 from src.agent.tools import get_agent_tools
 from src.rag.vector_store import CourseVectorStore
+
+
+class FollowUpSuggestions(BaseModel):
+    questions: List[str] = Field(
+        description=(
+            "2 to 3 short, natural follow-up questions a student might ask next, "
+            "based on the assistant's last answer. Each under ~12 words. "
+            "Genuinely useful next steps, not rephrasings of the same question."
+        )
+    )
 
 
 class CourseAgentRunner:
@@ -45,6 +56,10 @@ class CourseAgentRunner:
             tools=self.tools,
             prompt=SYSTEM_INSTRUCTION,
         )
+
+        # Reuses the same chat client for the lightweight "suggested follow-up
+        # questions" call — no separate model/endpoint config needed.
+        self.follow_up_llm = self.llm.with_structured_output(FollowUpSuggestions)
 
     def _extract_sources_from_metadata(self) -> List[Dict[str, str]]:
         """
@@ -204,3 +219,22 @@ class CourseAgentRunner:
             "content": final_text,
             "sources": sources,
         }
+
+    def suggest_follow_ups(self, user_input: str, assistant_response: str) -> List[str]:
+        """
+        Proposes 2-3 contextual follow-up questions grounded in the latest
+        exchange (same pattern as Perplexity/Bing's "people also ask"). Best
+        effort: returns an empty list on failure so it never blocks the chat.
+        """
+        try:
+            prompt = (
+                "Based on this Q&A exchange from an AI engineering course assistant, "
+                "propose 2-3 short, natural follow-up questions the student might ask next.\n\n"
+                f"Student asked: {user_input}\n\n"
+                f"Assistant answered: {assistant_response}"
+            )
+            result: FollowUpSuggestions = self.follow_up_llm.invoke(prompt)
+            return [q.strip() for q in result.questions if q.strip()][:3]
+        except Exception as err:
+            print(f"[LOG] Follow-up suggestion generation failed: {err}")
+            return []

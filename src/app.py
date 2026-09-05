@@ -7,6 +7,7 @@ Equipped with real-time execution step streaming and session-state persistence.
 
 import json
 import os
+import random
 import time
 import uuid
 from pathlib import Path
@@ -35,6 +36,50 @@ RESOURCES_DIR = Path(__file__).parent.parent / "resources"
 # (in .cache/, already gitignored). Only role/content/sources are persisted —
 # screenshots and generated audio stay in-memory only, to keep the file small.
 CHAT_STORE_PATH = Path(__file__).parent.parent / ".cache" / "chat_sessions.json"
+
+# Category → phrasing/icon for resource-derived starter suggestions. Mirrors
+# CourseDocumentProcessor._determine_category's folder-name heuristic, kept
+# separate rather than importing that class (which pulls in fitz + the vision
+# engine at module scope) just to categorize filenames for the UI.
+CATEGORY_SUGGESTION_STYLE = {
+    "assignments": (":material/assignment:", "What are the requirements for {title}?"),
+    "workshops": (":material/school:", "Walk me through {title}."),
+    "guidelines": (":material/menu_book:", "What does {title} cover?"),
+    "general": (":material/lightbulb:", "Tell me about {title}."),
+}
+
+
+@st.cache_data(show_spinner=False)
+def get_resource_documents() -> List[Dict[str, str]]:
+    """One-time disk scan of resources/ for starter-suggestion source material."""
+    documents = []
+    if not RESOURCES_DIR.exists():
+        return documents
+    for pdf_path in sorted(RESOURCES_DIR.rglob("*.pdf")):
+        path_str = str(pdf_path.relative_to(RESOURCES_DIR)).lower()
+        if "guideline" in path_str or "guide" in path_str:
+            category = "guidelines"
+        elif "workshop" in path_str:
+            category = "workshops"
+        elif "assignment" in path_str:
+            category = "assignments"
+        else:
+            category = "general"
+        documents.append({"title": pdf_path.stem.replace("_", " ").strip(), "category": category})
+    return documents
+
+
+def get_starter_suggestions() -> List[Dict[str, str]]:
+    """Random sample of real course documents, phrased as questions. Re-rolled
+    each time a fresh/empty chat starts, cached for the rest of that chat."""
+    if "starter_suggestions" not in st.session_state:
+        pool = get_resource_documents()
+        sample = random.sample(pool, k=min(3, len(pool))) if pool else []
+        st.session_state.starter_suggestions = [
+            {"icon": CATEGORY_SUGGESTION_STYLE[doc["category"]][0], "question": CATEGORY_SUGGESTION_STYLE[doc["category"]][1].format(title=doc["title"])}
+            for doc in sample
+        ]
+    return st.session_state.starter_suggestions
 
 
 def load_chat_sessions() -> List[Dict[str, Any]]:
@@ -73,6 +118,7 @@ def persist_current_session(messages: List[Dict[str, Any]]) -> None:
             "content": m["content"],
             "sources": m.get("sources", []),
             "thought_log": m.get("thought_log", []),
+            "follow_ups": m.get("follow_ups", []),
         }
         for m in messages
     ]
@@ -87,8 +133,15 @@ def delete_chat_session(session_id: str) -> None:
     sessions = [s for s in load_chat_sessions() if s["id"] != session_id]
     save_chat_sessions(sessions)
     if st.session_state.get("current_session_id") == session_id:
-        st.session_state.messages = []
-        st.session_state.current_session_id = None
+        reset_to_new_chat()
+
+
+def reset_to_new_chat() -> None:
+    """Clears the live view back to a blank chat, including the starter
+    suggestions so a fresh conversation gets a newly rolled sample."""
+    st.session_state.messages = []
+    st.session_state.current_session_id = None
+    st.session_state.pop("starter_suggestions", None)
 
 
 st.set_page_config(page_title="AI Course Assistant - Hackathon", page_icon="🎓", layout="wide")
@@ -225,8 +278,7 @@ with st.sidebar:
         st.image(uploaded_image, caption="Preview", use_container_width=True)
 
     if st.button("New chat", icon=":material/add_comment:", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.current_session_id = None
+        reset_to_new_chat()
         st.rerun()
 
     header_col, menu_col = st.columns([5, 1], vertical_alignment="center")
@@ -236,8 +288,7 @@ with st.sidebar:
         with st.popover(" ", icon=":material/more_vert:"):
             if st.button("Delete all history", icon=":material/delete_forever:", use_container_width=True):
                 save_chat_sessions([])
-                st.session_state.messages = []
-                st.session_state.current_session_id = None
+                reset_to_new_chat()
                 st.rerun()
 
     saved_sessions = sorted(load_chat_sessions(), key=lambda s: s["updated_at"], reverse=True)
@@ -323,21 +374,28 @@ for idx, message in enumerate(messages):
             if message["role"] == "assistant":
                 render_assistant_extras(idx, message)
 
-# Starter suggestions — only useful before the conversation has content;
-# once there's history, real context beats generic prompts.
-SUGGESTED_QUESTIONS = [
-    ("What's due in the current assignment?", ":material/assignment:"),
-    ("Walk me through the latest workshop steps.", ":material/school:"),
-    ("I'm getting an error in my code — how do I debug it?", ":material/bug_report:"),
-]
-
-if not messages:
+# Suggestion chips above the input: context-aware follow-ups grounded in the
+# last answer once there's a conversation, or a random resource-derived
+# sample for the very first, empty-state message (no prior answer to build
+# follow-ups from yet).
+last_message = messages[-1] if messages else None
+if last_message and last_message["role"] == "assistant" and last_message.get("follow_ups"):
+    st.caption("Continue with:")
+    suggestions = [
+        {"icon": ":material/arrow_forward:", "question": q} for q in last_message["follow_ups"]
+    ]
+elif not messages:
     st.caption("Try asking:")
-    suggestion_cols = st.columns(3)
-    for i, (col, (question, icon)) in enumerate(zip(suggestion_cols, SUGGESTED_QUESTIONS)):
+    suggestions = get_starter_suggestions()
+else:
+    suggestions = []
+
+if suggestions:
+    suggestion_cols = st.columns(len(suggestions))
+    for i, (col, suggestion) in enumerate(zip(suggestion_cols, suggestions)):
         with col:
-            if st.button(question, icon=icon, key=f"suggest_{i}", use_container_width=True):
-                st.session_state.pending_prompt = question
+            if st.button(suggestion["question"], icon=suggestion["icon"], key=f"suggest_{i}", use_container_width=True):
+                st.session_state.pending_prompt = suggestion["question"]
                 st.rerun()
 
 
@@ -378,6 +436,7 @@ if user_input or uploaded_image or pending_prompt:
         final_response_text = ""
         extracted_sources: List[Dict[str, str]] = []
         thought_log: List[Dict[str, Any]] = []
+        agent_error = False
 
         with st.status("🧠 Agent is coordinating tools and reasoning...", expanded=True) as status_box:
             try:
@@ -424,7 +483,16 @@ if user_input or uploaded_image or pending_prompt:
             except Exception as err:
                 status_box.update(label="❌ An error occurred during agent execution", state="error")
                 final_response_text = f"An error occurred while executing the agent: {err}"
+                agent_error = True
                 print(f"[X] Agent Runner Streaming Error: {err}")
+
+    # Context-aware follow-up suggestions, grounded in this specific answer —
+    # skipped on error, since there's nothing useful to follow up on.
+    follow_ups: List[str] = []
+    if final_response_text and not agent_error:
+        follow_ups = agent_runner.suggest_follow_ups(
+            user_input=augmented_prompt, assistant_response=final_response_text
+        )
 
     # Append Assistant Message to History; the rerun re-enters Step 3's loop,
     # which is the single place that renders the execution log, Listen
@@ -435,6 +503,7 @@ if user_input or uploaded_image or pending_prompt:
             "content": final_response_text,
             "sources": extracted_sources,
             "thought_log": thought_log,
+            "follow_ups": follow_ups,
         }
     )
     persist_current_session(messages)
