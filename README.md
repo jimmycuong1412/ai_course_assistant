@@ -1,210 +1,218 @@
-# 🎓 Workshop 4: AI Course Assistant - Advanced Multimodal Two-Stage RAG & ReAct Agent System
+# AI Course Assistant
 
-An enterprise-grade, multi-turn **Retrieval-Augmented Generation (RAG)** chatbot and autonomous **ReAct AI Agent** system for the **AI Application Engineer** course. Built using **LangChain**, **LangGraph**, **Pinecone Serverless Vector Store** with **Native Inference Re-ranking (`bge-reranker-v2-m3`)**, **Tavily Web Search**, and **Multimodal Vision Analysis**.
+AI Course Assistant is a domain-specific, multimodal assistant for the **AI Application Engineer** course. It answers questions about assignments, workshops, and guidelines using the course materials as its knowledge base. It also supports screenshot analysis, voice input/output, citations, conversation history, and contextual follow-up questions.
 
----
+The application is implemented as a Streamlit UI backed by a LangGraph ReAct agent, Pinecone two-stage retrieval, OpenAI-compatible models, and optional Tavily web search.
 
-## 🌟 Key Improvements Over Workshop 3
+## What It Does
 
-| Feature / Component | Workshop 3 (Baseline) | Workshop 4 (Upgraded System) |
-| :--- | :--- | :--- |
-| **Vector Database** | Local ChromaDB with basic vector ingestion. | **Pinecone Serverless Vector Store** with cosine similarity and enriched metadata filtering (`category`, `doc_code`, `page_number`, `source_file`). |
-| **Retrieval Architecture** | Single-stage dense retrieval (`top_k = 5`) susceptible to context loss and noise. | **Two-Stage Retrieval (Retrieve & Re-rank)**: Pinecone Bi-Encoder broad retrieval (`fetch_k = 15`) combined with Pinecone Inference Cross-Encoder (`bge-reranker-v2-m3`) to rank Top 5 most relevant chunks. |
-| **Document & Slide Parsing** | PyMuPDF (`fitz`) basic manual page text slicing. | **PyMuPDF Engine (`fitz`) + Multimodal Vision OCR**: High-performance layout reading for PPT/PDFs with automated screenshot transcription via `gpt-4o-mini` before splitting. |
-| **Retrieval Precision** | Raw dense vector similarity without query classification. | **Self-Querying Parameterization**: ReAct Agent dynamically formulates English semantic queries (`query`) while extracting explicit target identifiers (`doc_code`, `category`) to eliminate cross-document retrieval confusion. |
-| **Chunk Enrichment** | Basic page-level chunking. | **Post-Split Context Attachment**: Injects compact standardized headers (`Document`, `Category`, `Code`) onto chunks *after* splitting, preventing empty header fragmentation. |
-| **Agent Orchestration** | Manual tool-calling loop via direct OpenAI chat completions. | **LangGraph ReAct Agent (`create_react_agent`)** with autonomous multi-step reasoning, tool execution, and dynamic query translation. |
-| **Source Attribution** | Unstructured citation inside text (prone to hallucination and TTS artifacts). | **Direct Object-Level Metadata Extraction**: Extracts source files and page numbers directly from retrieved `Document` objects and displays them cleanly in an expandable UI component. |
-| **Prompt Engineering** | Raw string system prompt. | **LangChain `ChatPromptTemplate`**, `FewShotChatMessagePromptTemplate`, and `MessagesPlaceholder` with Chain-of-Thought reasoning guidelines. |
-| **External Real-time Data** | None (Limited strictly to internal course documents). | **Tavily Web Search Tool** for live web intelligence, library breaking changes, and external API documentation. |
-| **Multimodal Capabilities** | Text-only query support. | **Multimodal Vision Engine** via `gpt-4o-mini` with Pydantic Structured Outputs to debug user-submitted screenshot errors and inspect architecture diagrams. |
-| **Memory Management** | Full unconstrained message history appending. | **Bounded Sliding Window Conversation Memory** (preserving the most recent 10 turns to conserve token budget). |
-| **Conversation Guidance** | None (blank chat box, user must know what to ask). | **Contextual Follow-up Suggestions**: resource-derived starter chips on a new chat, then 2-3 clickable follow-up questions generated after each answer via a structured-output call grounded in the retrieved `doc_code`/`category` metadata, kept outside the answer text so TTS is unaffected. Off-topic questions are classified and answered with **Redirect Mode** chips drawn from the on-disk course catalog to guide the student back on track. |
+- Searches course documents using natural-language questions.
+- Filters retrieval by document category and normalized assignment/workshop code.
+- Uses Pinecone dense retrieval followed by neural reranking.
+- Shows source filenames and page numbers for retrieved course content.
+- Maintains a bounded conversation window of the most recent 10 turns.
+- Generates starter questions for a new chat and up to three contextual follow-up questions after an answer.
+- Redirects unrelated questions back to course topics.
+- Accepts uploaded PNG/JPG screenshots or diagrams for multimodal analysis.
+- Supports Vietnamese and English speech input through PhoWhisper and Whisper.
+- Generates Vietnamese or English audio on demand using gTTS.
+- Shows observable execution steps and tool calls in the UI. It does not expose hidden chain-of-thought.
+- Persists chat sessions locally in `.cache/chat_sessions.json`.
 
----
+## Architecture
 
-## 🛠️ Requirements & Setup
+### Query flow
 
-### 1. Prerequisites
-
-- Python 3.10+
-- [uv](https://github.com/astral-sh/uv) (Fast Python package manager) or standard Python `pip`
-- OpenAI / Custom Gateway credentials with Chat, Embedding, and Vision support (`gpt-4o-mini`, `text-embedding-3-small`)
-- [Pinecone API key](https://app.pinecone.io/) (Serverless Index & Inference support)
-- [Tavily Search API key](https://app.tavily.com/) (Optional, for web search capabilities)
-
-### 2. Environment Configuration
-
-Copy the example environment file and fill in your credentials:
-
-```bash
-cp .env.example .env
+```text
+User text / voice / image
+          |
+          v
+    Streamlit UI (src/app.py)
+          |
+          +--> VisionEngine (when an image is uploaded)
+          |
+          v
+    LangGraph ReAct Agent
+          |
+          +--> search_course_knowledge
+          |       |
+          |       +--> Pinecone similarity search (fetch_k=15)
+          |       +--> Pinecone Inference reranking (top_k=5)
+          |
+          +--> Tavily Search (optional, for live external information)
+          |
+          v
+    Answer + source metadata + execution steps
+          |
+          +--> Follow-up questions
+          +--> Text-to-Speech (on demand)
 ```
 
-Ensure your `.env` contains:
+### Document ingestion flow
+
+```text
+PDF files in resources/
+          |
+          v
+PyMuPDF page extraction
+          |
+          +--> Vision analysis for embedded screenshots/diagrams
+          |
+          v
+RecursiveCharacterTextSplitter
+          |
+          v
+Metadata enrichment:
+category, doc_code, source_file, page_number, chunk_id
+          |
+          v
+OpenAI-compatible embeddings -> Pinecone Serverless index
+```
+
+Retrieval first obtains a broad candidate set with dense similarity search (`fetch_k=15`). When enough candidates are available, Pinecone Inference reranks them with `bge-reranker-v2-m3` and returns the most relevant five chunks. If reranking fails, the implementation falls back to the first `top_k` candidates.
+
+## Repository Contents
+
+```text
+hackathon/
+├── resources/                    # Course PDFs: assignments, workshops, guidelines
+├── scripts/
+│   ├── start.bat                 # Windows Command Prompt launcher
+│   ├── start.ps1                 # Windows PowerShell launcher
+│   └── start.sh                  # macOS/Linux launcher
+├── src/
+│   ├── app.py                    # Streamlit application and chat workflow
+│   ├── agent/
+│   │   ├── agent_runner.py       # LangGraph ReAct orchestration and source extraction
+│   │   ├── followup_generator.py # Follow-up and off-topic redirect suggestions
+│   │   ├── prompts.py             # System prompt and few-shot examples
+│   │   └── tools.py               # Course search and optional Tavily tools
+│   ├── engines/
+│   │   ├── stt_engine.py         # Vietnamese/English speech-to-text
+│   │   ├── tts_engine.py         # Language-aware text-to-speech
+│   │   └── vision_engine.py      # Structured multimodal image analysis
+│   └── rag/
+│       ├── document_processor.py # PDF extraction, image analysis and chunking
+│       └── vector_store.py        # Pinecone index and two-stage retrieval
+├── tests/                        # Unit and Streamlit AppTest tests
+├── .env.example                  # Environment variable template
+├── requirements.txt              # Python dependencies
+└── TASKS_LIST.md                 # Team task allocation
+```
+
+The repository currently contains 26 PDF resources: 14 assignments, 9 workshop files, and 3 guideline files. The test suite contains 11 `test_*.py` files.
+
+## Requirements
+
+- Python 3.10 or newer.
+- An OpenAI-compatible chat, embedding, and vision endpoint.
+- Pinecone API access for the Serverless index and inference reranking.
+- Tavily API access is optional and enables live web search.
+- A microphone is required for voice input.
+- The first speech-to-text run may download the configured Hugging Face model.
+
+## Configuration
+
+Copy `.env.example` to `.env` and fill in the credentials for your environment:
 
 ```env
-# OpenAI / Custom Gateway Configuration
-OPENAI_ENDPOINT=https://your-custom-endpoint.com/v1
-OPENAI_API_KEY=your_openai_api_key
+OPENAI_ENDPOINT=https://your-compatible-endpoint.example/v1
+OPENAI_API_KEY=your_api_key
 OPENAI_CHAT_MODEL=gpt-4o-mini
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_VISION_MODEL=gpt-4o-mini
 
-# Pinecone Vector Store & Inference Configuration
 PINECONE_API_KEY=your_pinecone_api_key
 PINECONE_INDEX_NAME=course-knowledge-index
 PINECONE_CLOUD=aws
 PINECONE_REGION=us-east-1
 PINECONE_RERANK_MODEL=bge-reranker-v2-m3
 
-# External Tools Configuration
+# Optional: enables Tavily live web search
 TAVILY_API_KEY=your_tavily_api_key
+
+# Optional model overrides
+PHOWHISPER_MODEL=vinai/PhoWhisper-base
+WHISPER_EN_MODEL=openai/whisper-base.en
 ```
 
----
+Never commit `.env` or real API keys. The application can start with Tavily disabled, but the chat, embeddings, vision, and Pinecone configuration must match the capabilities of the configured endpoint and credentials.
 
-## 🚀 Execution & Quick Start
+## Run on Windows
 
-Use the included startup scripts inside the `scripts/` directory to automatically set up the virtual environment, install dependencies, and launch the Streamlit interface:
+From the repository root:
 
-### Option 1: macOS / Linux (Bash)
+```powershell
+.\scripts\start.ps1
+```
+
+The script creates or reuses a virtual environment, installs `requirements.txt`, sets `PYTHONPATH`, and starts Streamlit at `http://localhost:8501`.
+
+To skip dependency installation after the first run:
+
+```powershell
+.\scripts\start.ps1 -NoInstall
+```
+
+Command Prompt:
+
+```bat
+scripts\start.bat
+```
+
+macOS/Linux:
 
 ```bash
 chmod +x scripts/start.sh
 ./scripts/start.sh
 ```
 
-### Option 2: Windows (PowerShell)
+Manual launch:
 
-```powershell
-.\scripts\start.ps1
+```bash
+python -m pip install -r requirements.txt
+PYTHONPATH=. streamlit run src/app.py
 ```
 
-Tip: Pass `-NoInstall` to skip re-installing dependencies on subsequent runs.
+On Windows PowerShell, use `$env:PYTHONPATH = "."` before the manual Streamlit command if imports are not resolved.
 
-### Option 3: Windows (Command Prompt)
+## Using the Application
 
-```cmd
-scripts\start.bat
+1. Open a new chat and choose a starter question, or type a question about an assignment, workshop, guideline, or technical topic.
+2. For a screenshot or diagram question, upload a PNG/JPG file in the sidebar.
+3. Choose Vietnamese or English before recording a voice message.
+4. Review the answer and expand the execution steps when you need to see the invoked tool and a short result preview.
+5. Open the source control to inspect filenames and page numbers.
+6. Use the follow-up buttons to continue the conversation without retyping context.
+7. Select **Listen** on an answer to generate audio.
+
+## Testing
+
+Run the full test suite from the repository root:
+
+```bash
+python -m pytest
 ```
 
----
+The tests use mocks for external services and cover agent orchestration, prompts, tools, document processing, vector retrieval, speech/vision engines, source aggregation, sliding-window memory, follow-up generation, and Streamlit interaction flows. The Streamlit tests specifically cover starter questions, follow-up buttons, off-topic redirect mode, and protection against repeated processing of an uploaded image.
 
-## 🏗️ System Architecture
+Tests validate application behavior without requiring live API calls. They do not prove the quality, latency, or availability of a production deployment.
 
-```text
-                                 +-------------------------+
-                                 |   User (Text / Image)   |
-                                 +------------+------------+
-                                              |
-                                              v
-                                 +-------------------------+
-                                 | Streamlit UI (src/app.py)|
-                                 +------------+------------+
-                                              |
-                     +------------------------+------------------------+
-                     | (User Screenshot Uploaded)                      | (Text / Augmented Prompt)
-                     v                                                 v
-        +-------------------------+                       +-------------------------+
-        |      VisionEngine       |                       |   CourseAgentRunner     |
-        | (src/engines/vision...) |                       | (src/agent/agent_runner)|
-        | (Structured Extraction) |                       | (LangGraph ReAct Loop)  |
-        +------------+------------+                       +------------+------------+
-                     |                                                 |
-                     +----------------> [Augmented Context] ----------->
-                                                                       | (Dynamic Tool Selection)
-                                            +--------------------------+--------------------------+
-                                            |                                                     |
-                                            v                                                     v
-                            +-------------------------------+                     +-------------------------------+
-                            |   search_course_knowledge     |                     |         TavilySearch          |
-                            |     (src/agent/tools.py)      |                     |     (src/agent/tools.py)      |
-                            +---------------+---------------+                     +---------------+---------------+
-                                            |                                                     |
-                                            v                                                     v
-                            +-------------------------------+                     +-------------------------------+
-                            |   Stage 1: Broad Retrieval    |                     |      Live Web Intelligence    |
-                            |   (Pinecone Vector Search)    |                     |       (External Web API)      |
-                            |       (fetch_k = 15)          |                     +-------------------------------+
-                            +---------------+---------------+
-                                            |
-                                            v
-                            +-------------------------------+
-                            |   Stage 2: Neural Re-Ranking  |
-                            |  (pc.inference.rerank API)    |
-                            |   (bge-reranker-v2-m3, top=5) |
-                            +---------------+---------------+
-                                            |
-                                            v
-                            +-------------------------------+
-                            | PyMuPDF + Document Ingestion  |
-                            | (src/rag/document_processor)  |
-                            +---------------+---------------+
-                                            |
-                                            v
-                            +-------------------------------+
-                            |    Course PDFs (resources/)   |
-                            +-------------------------------+
-```
+## Current Scope and Limitations
 
----
+- Pinecone, model endpoints, and required credentials are external dependencies.
+- Tavily is optional; without `TAVILY_API_KEY`, the live web-search tool is not registered.
+- Retrieval quality depends on the course PDFs, embedding model, metadata, and reranker availability.
+- Speech models may require a large initial download and local compute resources.
+- Chat sessions are stored locally for the current machine; there is no multi-user authentication or shared session database.
+- No public deployment URL or benchmark result is claimed by this README. Add those details only after they have been verified.
+- `to-do.md` tracks remaining product work such as deployment and any follow-up validation.
 
-## 📂 Repository Structure
+## Team and Project References
 
-```text
-workshop4/
-├── resources/                  # Internal course PDF documents (Assignments, Workshops, Guidelines)
-├── scripts/                    # Startup automation scripts
-│   ├── start.bat               # Windows CMD launcher
-│   ├── start.ps1               # Windows PowerShell launcher
-│   └── start.sh                # macOS / Linux Bash launcher
-├── src/                        # Core system source code
-│   ├── agent/                  # Agent reasoning & tool handling
-│   │   ├── __init__.py
-│   │   ├── agent_runner.py     # LangGraph ReAct Agent orchestration & source metadata extraction
-│   │   ├── followup_generator.py # Contextual follow-up suggestions with off-topic redirect mode
-│   │   ├── prompts.py          # LangChain ChatPromptTemplate with CoT & Few-Shot Examples
-│   │   └── tools.py            # LangChain Tools (Two-Stage RAG retrieval & Tavily Search)
-│   ├── engines/                # Specialized service engines
-│   │   ├── __init__.py
-│   │   ├── tts_engine.py       # Text-to-Speech Engine (gTTS + Language Auto-Detection)
-│   │   └── vision_engine.py    # Multimodal Vision Analyzer with Structured Output
-│   ├── rag/                    # Data processing & Vector Database
-│   │   ├── __init__.py
-│   │   ├── document_processor.py # PDF Loader (PyMuPDF) & Semantic Text Splitter
-│   │   └── vector_store.py     # Pinecone Vector Store with Native Inference Re-ranking
-│   ├── __init__.py
-│   └── app.py                  # Main Streamlit Web Application
-├── tests/                      # Unit test suites
-├── .env.example                # Sample environment variables template
-├── .gitignore                  # Git ignore rules
-├── README.md                   # Project documentation
-├── requirements.txt            # Project dependencies
-└── TASKS_LIST.md               # Task tracking checklist
+- Team task allocation: [TASKS_LIST.md](TASKS_LIST.md)
+- Hackathon requirements and evaluation criteria: `../hackathon.md`
+- Presentation materials: [slides/](slides/)
+- Course knowledge base: [resources/](resources/)
 
-```
-
----
-
-## 💡 Methodology & Approach Explanation
-
-1. **High-Fidelity Document & Visual Ingestion:**
-    - Employs **PyMuPDF (`fitz`)** for native bounding-box layout parsing across converted PowerPoint slides (Workshops) and PDF guidelines.
-    - Automates image inspection by extracting embedded screenshots and transcribing UI elements, code snippets, and button actions using `VisionEngine` (`gpt-4o-mini`) directly during document ingestion.
-
-2. **Semantic Chunking & Post-Split Context Enrichment:**
-    - Applies `RecursiveCharacterTextSplitter` on clean body text to preserve natural paragraph and sentence boundaries.
-    - Injects standardized metadata headers (`Document: ... | Category: ... | Code: ...`) directly onto chunks *after* splitting, ensuring every chunk retains document identity without generating empty header fragments.
-
-3. **Two-Stage Retrieval (Retrieve & Re-Rank):**
-    - **Stage 1 (Bi-Encoder Retrieval):** Fetches an expanded candidate pool (`fetch_k = 15`) from Pinecone using dense vector embeddings to maximize recall and prevent context loss.
-    - **Stage 2 (Cross-Encoder Re-Ranking):** Applies Pinecone's native inference reranking (`pc.inference.rerank` with `bge-reranker-v2-m3`) to re-score candidate chunks based on full query-passage cross-attention, returning the Top 5 most relevant chunks.
-
-4. **Self-Querying Parameterized Retrieval:**
-    - Provides structured parameter hooks (`query`, `category`, `doc_code`) in `search_course_knowledge`.
-    - The ReAct Agent isolates document identifiers (e.g., `"Assignment 10"` $\rightarrow$ `doc_code="assignment_10"`) and converts semantic intent into enriched English search terms, ensuring zero cross-document vector drift.
-
-5. **Autonomous Multi-Tool Orchestration & Clean Attribution:**
-    - Powered by `create_react_agent` from `langgraph.prebuilt` to dynamically decide between internal knowledge search and external research (`Tavily`).
-    - Source documents and page numbers are captured directly from Python `Document` metadata objects and displayed cleanly in UI expanders, ensuring pristine TTS output without reading raw filenames aloud.
+Update the presentation with the verified team name, member list, GitHub URL, deployment URL, screenshots, and measured test/deployment results before submission.
