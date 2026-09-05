@@ -24,6 +24,7 @@ streamlit>=1.62.0
 torch>=2.9.0
 transformers>=5.16.1
 soundfile>=0.14.0
+numpy>=2.1.0
 
 # Testing
 pytest>=9.1.1
