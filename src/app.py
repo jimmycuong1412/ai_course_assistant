@@ -8,10 +8,20 @@ Equipped with real-time execution step streaming and session-state persistence.
 import json
 import os
 import random
+import sys
 import time
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
+
+# Make the repo root importable so `import src.*` resolves no matter how the app
+# is launched. Locally the start scripts export PYTHONPATH=. , but Streamlit
+# Cloud runs `streamlit run src/app.py` directly, which puts src/ (not the repo
+# root) on sys.path -- so `src` isn't a package there and every src.* import
+# raises ModuleNotFoundError. Must run before any src.* import.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import streamlit as st
 from dotenv import load_dotenv
