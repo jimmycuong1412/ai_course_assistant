@@ -9,7 +9,6 @@ import pytest
 from src.agent.followup_generator import (
     MAX_SUGGESTIONS,
     REDIRECT_QUESTIONS,
-    STARTER_QUESTIONS,
     FollowUpGenerator,
     FollowUpSuggestions,
 )
@@ -218,6 +217,3 @@ class TestFollowUpGenerator:
 
         assert "Assignments 01-14" in generator.course_catalog
 
-    def test_starter_questions_are_available_for_cold_start(self):
-        assert 0 < len(STARTER_QUESTIONS) <= MAX_SUGGESTIONS
-        assert all(q.strip() for q in STARTER_QUESTIONS)

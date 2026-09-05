@@ -1,6 +1,6 @@
 """
 followup_generator.py - Generates contextual follow-up question suggestions after each
-assistant answer, plus the static starter questions shown when a chat session is empty.
+assistant answer. Cold-start chips are owned by app.py's resource-derived starters.
 
 Runs as a single lightweight structured-output LLM call outside the ReAct graph so the
 suggestions never leak into the answer text that is forwarded to the TTS engine.
@@ -27,15 +27,6 @@ MAX_QUESTION_LENGTH = 90
 
 # Number of catalog entries per category injected into the prompt
 MAX_CATALOG_ENTRIES_PER_CATEGORY = 15
-
-# Static cold-start prompts displayed when the conversation history is empty. Kept in
-# English: the assistant answers in whatever language it is asked, so these also set the
-# default language of the session. Follow-up suggestions then track the student's own language.
-STARTER_QUESTIONS: List[str] = [
-    "What does Assignment 10 require?",
-    "How does Workshop 04 build a ReAct agent?",
-    "What are the submission guidelines for assignments?",
-]
 
 # Deterministic safety net used when a student goes off-topic and the model returns
 # nothing usable. Keyed by the language detected in the student's question.

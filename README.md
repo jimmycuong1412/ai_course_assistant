@@ -19,7 +19,7 @@ An enterprise-grade, multi-turn **Retrieval-Augmented Generation (RAG)** chatbot
 | **External Real-time Data** | None (Limited strictly to internal course documents). | **Tavily Web Search Tool** for live web intelligence, library breaking changes, and external API documentation. |
 | **Multimodal Capabilities** | Text-only query support. | **Multimodal Vision Engine** via `gpt-4o-mini` with Pydantic Structured Outputs to debug user-submitted screenshot errors and inspect architecture diagrams. |
 | **Memory Management** | Full unconstrained message history appending. | **Bounded Sliding Window Conversation Memory** (preserving the most recent 10 turns to conserve token budget). |
-| **Conversation Guidance** | None (blank chat box, user must know what to ask). | **Contextual Follow-up Suggestions**: static starter prompts on a new chat, plus 2-3 clickable follow-up questions generated after each answer via a structured-output call grounded in the retrieved `doc_code`/`category` metadata, kept outside the answer text so TTS is unaffected. Off-topic questions are classified and answered with **Redirect Mode** chips drawn from the on-disk course catalog to guide the student back on track. |
+| **Conversation Guidance** | None (blank chat box, user must know what to ask). | **Contextual Follow-up Suggestions**: resource-derived starter chips on a new chat, then 2-3 clickable follow-up questions generated after each answer via a structured-output call grounded in the retrieved `doc_code`/`category` metadata, kept outside the answer text so TTS is unaffected. Off-topic questions are classified and answered with **Redirect Mode** chips drawn from the on-disk course catalog to guide the student back on track. |
 
 ---
 
@@ -163,7 +163,7 @@ workshop4/
 │   ├── agent/                  # Agent reasoning & tool handling
 │   │   ├── __init__.py
 │   │   ├── agent_runner.py     # LangGraph ReAct Agent orchestration & source metadata extraction
-│   │   ├── followup_generator.py # Contextual follow-up question suggestions & starter prompts
+│   │   ├── followup_generator.py # Contextual follow-up suggestions with off-topic redirect mode
 │   │   ├── prompts.py          # LangChain ChatPromptTemplate with CoT & Few-Shot Examples
 │   │   └── tools.py            # LangChain Tools (Two-Stage RAG retrieval & Tavily Search)
 │   ├── engines/                # Specialized service engines

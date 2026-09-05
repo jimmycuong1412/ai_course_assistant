@@ -46,6 +46,7 @@ class CourseAgentRunner:
             prompt=SYSTEM_INSTRUCTION,
         )
 
+
     def _extract_sources_from_metadata(self) -> List[Dict[str, str]]:
         """
         Extracts and aggregates source files and page numbers directly from
