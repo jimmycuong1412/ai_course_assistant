@@ -302,7 +302,8 @@ with st.sidebar:
         help="Upload error traceback screenshots, code images, or architecture diagrams.",
     )
     if uploaded_image:
-        st.image(uploaded_image, caption="Preview", use_container_width=True)
+        st.image(uploaded_image, caption="Attached Image Preview", use_container_width=True)
+        st.caption("📎 Image attached. Type your question in the chat below to submit.")
 
     st.subheader("🎤 Voice Input Language")
     stt_language_label = st.radio(
@@ -456,21 +457,14 @@ if chat_value and chat_value.audio is not None:
     with st.spinner(f"Transcribing {stt_language_label} speech..."):
         voice_transcript = stt_engine.transcribe(chat_value.audio.getvalue(), language=stt_language)
 
-# A file_uploader keeps returning the same file on every rerun, so an image alone can
-# only open a turn once. Without this the end-of-turn st.rerun() below re-enters here
-# with the uploader still populated and drives the agent in a loop.
-image_is_new = bool(uploaded_image) and (
-    uploaded_image.file_id != st.session_state.get("processed_image_id")
-)
-
-if user_input or image_is_new or pending_prompt or voice_transcript:
-    current_prompt = user_input or voice_transcript or pending_prompt or "Please inspect this uploaded image and provide guidance."
+# ONLY trigger the agent when there is an intentional query action from the user
+if user_input or pending_prompt or voice_transcript:
+    current_prompt = user_input or voice_transcript or pending_prompt
     augmented_prompt = current_prompt
     image_bytes_to_store = None
 
-    # Process uploaded image if available
+    # Attach uploaded image if present when the query is sent
     if uploaded_image:
-        st.session_state.processed_image_id = uploaded_image.file_id
         image_bytes_to_store = uploaded_image.read()
         with st.spinner("Analyzing uploaded image with Multimodal Vision..."):
             vision_context = vision_engine.analyze_image_bytes(image_bytes_to_store, user_note=current_prompt)
