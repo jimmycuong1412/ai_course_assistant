@@ -76,7 +76,12 @@ def get_agent_tools(vector_store: CourseVectorStore) -> List[BaseTool]:
     """
     Aggregates all enabled tools for the ReAct Agent.
     """
-    tools = [create_course_search_tool(vector_store)]
+    tools = []
+    if getattr(vector_store, "rag_enabled", True):
+        tools.append(create_course_search_tool(vector_store))
+    else:
+        print("[!] Warning: RAG disabled (no embedding access). 'search_course_knowledge' tool not registered.")
+
     tavily_tool = create_tavily_search_tool()
 
     if tavily_tool:

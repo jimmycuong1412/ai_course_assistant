@@ -60,8 +60,21 @@ class CourseVectorStore:
             pinecone_api_key=self.pinecone_api_key,
         )
 
-        # Ingest documents if index is fresh or empty
-        self._sync_documents_if_needed()
+        # RAG requires embedding access for both ingestion and querying; probe once upfront
+        # so a restricted key degrades to chat-only instead of crashing on first use.
+        self.rag_enabled = self._check_embeddings_available()
+
+        if self.rag_enabled:
+            self._sync_documents_if_needed()
+        else:
+            print(f"[!] Embedding model '{self.embedding_model}' is not accessible with the configured key. RAG document search disabled.\n")
+
+    def _check_embeddings_available(self) -> bool:
+        try:
+            self.embeddings.embed_query("healthcheck")
+            return True
+        except Exception:
+            return False
 
     def _ensure_index_exists(self) -> None:
         """
@@ -115,7 +128,7 @@ class CourseVectorStore:
         Stage 1: Retrieve wide candidate pool (fetch_k=15) via vector similarity.
         Stage 2: Re-rank candidates down to top_k using Pinecone Inference API (bge-reranker-v2-m3).
         """
-        if not query.strip():
+        if not query.strip() or not self.rag_enabled:
             self.last_retrieved_docs = []
             return []
 

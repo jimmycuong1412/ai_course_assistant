@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 
 if TYPE_CHECKING:
     from src.agent.agent_runner import CourseAgentRunner
+    from src.engines.stt_engine import STTEngine
     from src.engines.tts_engine import TTSEngine
     from src.engines.vision_engine import VisionEngine
     from src.rag.vector_store import CourseVectorStore
@@ -201,10 +202,18 @@ def get_tts_engine() -> "TTSEngine":
     return TTSEngine()
 
 
+@st.cache_resource(show_spinner="Loading Speech-to-Text Models...")
+def get_stt_engine() -> "STTEngine":
+    from src.engines.stt_engine import STTEngine
+
+    return STTEngine()
+
+
 vector_store = get_vector_store()
 agent_runner = get_agent_runner(vector_store)
 vision_engine = get_vision_engine()
 tts_engine = get_tts_engine()
+stt_engine = get_stt_engine()
 
 
 # ==============================================================================
@@ -253,6 +262,12 @@ CONNECTORS = [
         "connected": True,
         "detail": "gTTS with automatic English/Vietnamese detection, generated on demand via each reply's Listen button.",
     },
+    {
+        "name": "Speech-to-Text",
+        "type": "Voice",
+        "connected": True,
+        "detail": "PhoWhisper (Vietnamese) / Whisper (English) via the mic button in the chat input; language picked in the sidebar.",
+    },
 ]
 
 
@@ -276,6 +291,16 @@ with st.sidebar:
     )
     if uploaded_image:
         st.image(uploaded_image, caption="Preview", use_container_width=True)
+
+    st.subheader("🎤 Voice Input Language")
+    stt_language_label = st.radio(
+        "Speech-to-text language",
+        options=["Vietnamese", "English"],
+        horizontal=True,
+        label_visibility="collapsed",
+        help="Language of the voice message recorded via the mic button in the chat input.",
+    )
+    stt_language = "vi" if stt_language_label == "Vietnamese" else "en"
 
     if st.button("New chat", icon=":material/add_comment:", use_container_width=True):
         reset_to_new_chat()
@@ -402,11 +427,21 @@ if suggestions:
 # ==============================================================================
 # Step 4: User Query Processing & Real-Time Streaming Loop
 # ==============================================================================
-user_input = st.chat_input("Ask about assignments, workshops, code errors, or external technical topics...")
+chat_value = st.chat_input(
+    "Ask about assignments, workshops, code errors, or external technical topics... (or use the mic)",
+    accept_audio=True,
+    audio_sample_rate=16000,
+)
 pending_prompt = st.session_state.pop("pending_prompt", None)
 
-if user_input or uploaded_image or pending_prompt:
-    current_prompt = user_input or pending_prompt or "Please inspect this uploaded image and provide guidance."
+user_input = chat_value.text.strip() if chat_value and chat_value.text else None
+voice_transcript = None
+if chat_value and chat_value.audio is not None:
+    with st.spinner(f"Transcribing {stt_language_label} speech..."):
+        voice_transcript = stt_engine.transcribe(chat_value.audio.getvalue(), language=stt_language)
+
+if user_input or uploaded_image or pending_prompt or voice_transcript:
+    current_prompt = user_input or voice_transcript or pending_prompt or "Please inspect this uploaded image and provide guidance."
     augmented_prompt = current_prompt
     image_bytes_to_store = None
 
