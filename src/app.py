@@ -2,6 +2,7 @@
 app.py - Main Streamlit UI for the AI Course Assistant.
 Combines Pinecone Two-Stage Vector Store (Retrieve & Re-rank), LangGraph ReAct Agent,
 Tavily Search, Multimodal Vision Analysis, and Text-to-Speech synthesis with Document Citations.
+Equipped with real-time execution step streaming and session-state persistence.
 """
 
 import json
@@ -67,7 +68,13 @@ def persist_current_session(messages: List[Dict[str, Any]]) -> None:
         title = first_user_message[:40] + "…" if len(first_user_message) > 40 else first_user_message
 
     serializable_messages = [
-        {"role": m["role"], "content": m["content"], "sources": m.get("sources", [])} for m in messages
+        {
+            "role": m["role"],
+            "content": m["content"],
+            "sources": m.get("sources", []),
+            "thought_log": m.get("thought_log", []),
+        }
+        for m in messages
     ]
     sessions = [s for s in sessions if s["id"] != session_id]
     sessions.append(
@@ -84,7 +91,7 @@ def delete_chat_session(session_id: str) -> None:
         st.session_state.current_session_id = None
 
 
-st.set_page_config(page_title="AI Course Assistant - WS4", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="AI Course Assistant - Hackathon", page_icon="🎓", layout="wide")
 st.title("🎓 AI Application Engineer - Smart Assistant")
 
 # Native <audio> controls can't be restyled from Python; this is the one CSS
@@ -253,7 +260,7 @@ with st.sidebar:
 
 
 # ==============================================================================
-# Step 3: Chat History Rendering
+# Step 3: Chat History Rendering (with persisted execution steps)
 # ==============================================================================
 if "messages" not in st.session_state:
     # Fresh browser session (e.g. after a page refresh) — reopen whatever
@@ -297,9 +304,22 @@ def render_assistant_extras(idx: int, message: Dict[str, Any]) -> None:
 for idx, message in enumerate(messages):
     if message.get("role") in ["user", "assistant"] and message.get("content"):
         with st.chat_message(message["role"]):
-            st.markdown(message["content"])
             if message.get("image_bytes"):
                 st.image(message["image_bytes"], width=300)
+
+            # Render persisted agent execution steps (tool calls) above the answer
+            if message["role"] == "assistant" and message.get("thought_log"):
+                with st.expander("🔍 View Execution Steps & Tool Calls", expanded=False):
+                    for step in message["thought_log"]:
+                        step_type = step.get("type")
+                        if step_type == "action":
+                            st.markdown(f"🛠️ **Invoked Tool:** `{step.get('tool')}`")
+                            st.caption(f"Arguments: `{step.get('args')}`")
+                        elif step_type == "observation":
+                            st.markdown(f"📥 **Output from:** `{step.get('tool')}`")
+                            st.caption(step.get("preview", ""))
+
+            st.markdown(message["content"])
             if message["role"] == "assistant":
                 render_assistant_extras(idx, message)
 
@@ -322,7 +342,7 @@ if not messages:
 
 
 # ==============================================================================
-# Step 4: User Query Processing & Execution Loop
+# Step 4: User Query Processing & Real-Time Streaming Loop
 # ==============================================================================
 user_input = st.chat_input("Ask about assignments, workshops, code errors, or external technical topics...")
 pending_prompt = st.session_state.pop("pending_prompt", None)
@@ -353,26 +373,68 @@ if user_input or uploaded_image or pending_prompt:
         if image_bytes_to_store:
             st.image(image_bytes_to_store, width=300)
 
-    with st.spinner("Agent is reasoning and executing tools..."):
-        try:
-            # Invoke LangGraph ReAct Agent
-            full_response, extracted_sources = agent_runner.process_query(
-                user_input=augmented_prompt,
-                chat_history=messages,
-                max_history_turns=10,
-            )
-        except Exception as err:
-            full_response = f"An error occurred while executing the agent: {err}"
-            extracted_sources = []
-            print(f"[X] Agent Runner Error: {err}")
+    # Stream the agent's reasoning/tool calls live, instead of a bare spinner.
+    with st.chat_message("assistant"):
+        final_response_text = ""
+        extracted_sources: List[Dict[str, str]] = []
+        thought_log: List[Dict[str, Any]] = []
+
+        with st.status("🧠 Agent is coordinating tools and reasoning...", expanded=True) as status_box:
+            try:
+                event_stream = agent_runner.stream_query(
+                    user_input=augmented_prompt,
+                    chat_history=messages,
+                    max_history_turns=10,
+                )
+
+                for event in event_stream:
+                    event_type = event.get("type")
+
+                    if event_type == "action":
+                        tool_name = event.get("tool", "tool")
+                        tool_args = event.get("args", {})
+                        status_box.write(f"🛠️ **Executing Tool:** `{tool_name}`")
+                        st.caption(f"Arguments: `{tool_args}`")
+                        thought_log.append(event)
+
+                    elif event_type == "observation":
+                        tool_name = event.get("tool", "tool")
+                        preview = event.get("preview", "")
+                        status_box.write(f"📥 **Received Result from:** `{tool_name}`")
+                        st.caption(preview)
+                        thought_log.append(event)
+
+                    elif event_type == "final_answer":
+                        final_response_text = event.get("content", "")
+                        extracted_sources = event.get("sources", [])
+
+                if thought_log:
+                    status_box.update(
+                        label="✔ Tool execution and retrieval completed!",
+                        state="complete",
+                        expanded=False,
+                    )
+                else:
+                    status_box.update(
+                        label="✔ Direct answer generated (No tool calls required)",
+                        state="complete",
+                        expanded=False,
+                    )
+
+            except Exception as err:
+                status_box.update(label="❌ An error occurred during agent execution", state="error")
+                final_response_text = f"An error occurred while executing the agent: {err}"
+                print(f"[X] Agent Runner Streaming Error: {err}")
 
     # Append Assistant Message to History; the rerun re-enters Step 3's loop,
-    # which is the single place that renders the Listen button + citations.
+    # which is the single place that renders the execution log, Listen
+    # button, sources, and audio player — no duplicate rendering here.
     messages.append(
         {
             "role": "assistant",
-            "content": full_response,
+            "content": final_response_text,
             "sources": extracted_sources,
+            "thought_log": thought_log,
         }
     )
     persist_current_session(messages)
