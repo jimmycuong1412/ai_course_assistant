@@ -9,6 +9,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from src.agent.agent_runner import CourseAgentRunner
+from src.engines.stt_engine import STTEngine
 from src.engines.tts_engine import TTSEngine
 from src.rag.vector_store import CourseVectorStore
 from src.engines.vision_engine import VisionEngine
@@ -46,10 +47,16 @@ def get_tts_engine() -> TTSEngine:
     return TTSEngine()
 
 
+@st.cache_resource(show_spinner="Loading PhoWhisper Speech-to-Text Model...")
+def get_stt_engine() -> STTEngine:
+    return STTEngine()
+
+
 vector_store = get_vector_store()
 agent_runner = get_agent_runner(vector_store)
 vision_engine = get_vision_engine()
 tts_engine = get_tts_engine()
+stt_engine = get_stt_engine()
 
 
 # ==============================================================================
@@ -71,6 +78,16 @@ with st.sidebar:
     )
     if uploaded_image:
         st.image(uploaded_image, caption="Uploaded Image Preview", use_container_width=True)
+
+    st.subheader("🎤 Voice Input Language")
+    stt_language_label = st.radio(
+        "Speech-to-text language",
+        options=["Vietnamese", "English"],
+        horizontal=True,
+        label_visibility="collapsed",
+        help="Language of the voice message recorded via the mic button in the chat input.",
+    )
+    stt_language = "vi" if stt_language_label == "Vietnamese" else "en"
 
     if st.button("🧹 Clear Chat History", use_container_width=True):
         st.session_state.messages = []
@@ -106,10 +123,20 @@ for message in st.session_state.messages:
 # ==============================================================================
 # Step 4: User Query Processing & Execution Loop
 # ==============================================================================
-user_input = st.chat_input("Ask about assignments, workshops, code errors, or external technical topics...")
+chat_value = st.chat_input(
+    "Ask about assignments, workshops, code errors, or external technical topics... (or record in Vietnamese)",
+    accept_audio=True,
+    audio_sample_rate=16000,
+)
 
-if user_input or uploaded_image:
-    current_prompt = user_input or "Please inspect this uploaded image and provide guidance."
+user_input = chat_value.text.strip() if chat_value and chat_value.text else None
+voice_transcript = None
+if chat_value and chat_value.audio is not None:
+    with st.spinner(f"Transcribing {stt_language_label} speech..."):
+        voice_transcript = stt_engine.transcribe(chat_value.audio.getvalue(), language=stt_language)
+
+if user_input or uploaded_image or voice_transcript:
+    current_prompt = user_input or voice_transcript or "Please inspect this uploaded image and provide guidance."
     image_bytes_to_store = None
     augmented_prompt = current_prompt
 
