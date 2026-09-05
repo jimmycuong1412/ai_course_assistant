@@ -65,9 +65,10 @@ def create_tavily_search_tool() -> Optional[BaseTool]:
         max_results=3,
         topic="general",
         description=(
-            "A real-time search engine. Useful for looking up latest technical information, "
-            "library breaking changes, external API documentation, latest AI research, or current events "
-            "that are not found in the internal course materials."
+            "A real-time search engine scoped to this AI course's domain. Use ONLY for looking up "
+            "latest technical/AI information, library breaking changes, external API documentation, "
+            "or AI research news that is not found in the internal course materials. "
+            "Do NOT use for topics unrelated to the course (e.g. cooking, sports, general trivia)."
         ),
     )
 
