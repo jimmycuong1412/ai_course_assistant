@@ -54,15 +54,19 @@ class TestCourseAgentRunner:
         sources = runner._extract_sources_from_metadata()
         assert sources == []
 
-    def test_process_query_sliding_window_memory(self):
+    def test_stream_query_sliding_window_memory(self):
+        """stream_query must apply the sliding window and pass correct messages to executor."""
         mock_vs = MagicMock()
         mock_vs.last_retrieved_docs = []
         runner = CourseAgentRunner(vector_store=mock_vs)
 
-        # Mock agent executor response
-        self.mock_executor.invoke.return_value = {
-            "messages": [AIMessage(content="Final response from ReAct agent")]
-        }
+        # Build a final_answer event so stream_query yields something and exits
+        final_msg = MagicMock()
+        final_msg.tool_calls = None
+        final_msg.content = "Final response from ReAct agent"
+        self.mock_executor.stream.return_value = iter([
+            {"agent": {"messages": [final_msg]}}
+        ])
 
         # Create 14 chat turns (7 user + 7 assistant)
         long_chat_history = []
@@ -70,19 +74,19 @@ class TestCourseAgentRunner:
             long_chat_history.append({"role": "user", "content": f"User question {i+1}"})
             long_chat_history.append({"role": "assistant", "content": f"Assistant answer {i+1}"})
 
-        # Process query with max_history_turns=6
-        final_text, sources = runner.process_query(
+        # Consume all events from stream_query with max_history_turns=6
+        events = list(runner.stream_query(
             user_input="Current prompt question",
             chat_history=long_chat_history,
             max_history_turns=6,
-        )
+        ))
 
-        assert final_text == "Final response from ReAct agent"
-        assert sources == []
+        final_event = next(e for e in events if e["type"] == "final_answer")
+        assert final_event["content"] == "Final response from ReAct agent"
 
-        # Verify that executor received exactly 6 historical turns + 1 current prompt = 7 messages
-        passed_messages = self.mock_executor.invoke.call_args[0][0]["messages"]
+        # Verify executor received exactly 6 historical turns + 1 current = 7 messages
+        passed_messages = self.mock_executor.stream.call_args[0][0]["messages"]
         assert len(passed_messages) == 7
         assert passed_messages[-1].content == "Current prompt question"
-        # First message in window should be turn index 8 (from the last 6 turns of 14)
+        # First message in window should be "User question 5" (last 6 of 14 turns)
         assert passed_messages[0].content == "User question 5"
